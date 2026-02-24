@@ -2,13 +2,70 @@
 <html>
   <head>
     <title>P2P AR Multiplayer - FDE CYCLE</title>
-    <!-- Dependencies -->
+    <!-- Core AR dependencies -->
     <script src="https://aframe.io/releases/1.3.0/aframe.min.js"></script>
     <script src="https://raw.githack.com/AR-js-org/AR.js/master/aframe/build/aframe-ar.js"></script>
     <script src="https://cdn.jsdelivr.net/gh/donmccurdy/aframe-extras@v6.1.1/dist/aframe-extras.min.js"></script>
-    <!-- FBX Model Component -->
-    <script src="https://cdn.jsdelivr.net/gh/mflux/aframe-fbx-model-component/dist/aframe-fbx-model-component.min.js"></script>
+    <!-- Three.js FBXLoader (uses the same Three.js version bundled in A-Frame 1.3.0 = r136) -->
+    <script src="https://cdn.jsdelivr.net/npm/fflate@0.8.2/umd/index.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.136.0/examples/js/loaders/FBXLoader.js"></script>
+    <!-- P2P networking -->
     <script src="https://unpkg.com/peerjs@1.4.7/dist/peerjs.min.js"></script>
+
+    <script>
+      // ─── Custom A-Frame component: load-fbx ───────────────────────────────
+      // Usage:
+      //   load-fbx="src: path/to/model.fbx; animSrc: path/to/anim.fbx; scale: 0.01"
+      // animSrc is optional - if provided its animation clips are applied to the model.
+      AFRAME.registerComponent('load-fbx', {
+        schema: {
+          src:     { type: 'string', default: '' },
+          animSrc: { type: 'string', default: '' },
+          scale:   { type: 'number', default: 0.01 }
+        },
+        init() {
+          const loader = new THREE.FBXLoader();
+          const s = this.data.scale;
+
+          loader.load(this.data.src, (model) => {
+            model.scale.setScalar(s);
+            this.el.setObject3D('mesh', model);
+
+            // If there are animations embedded in the model itself, play them
+            if (model.animations && model.animations.length > 0 && !this.data.animSrc) {
+              const mixer = new THREE.AnimationMixer(model);
+              const action = mixer.clipAction(model.animations[0]);
+              action.play();
+              this._mixer = mixer;
+            }
+
+            // If a separate animation file is provided, load it and apply
+            if (this.data.animSrc) {
+              loader.load(this.data.animSrc, (animFbx) => {
+                const clips = animFbx.animations;
+                if (clips && clips.length > 0) {
+                  const mixer = new THREE.AnimationMixer(model);
+                  const action = mixer.clipAction(clips[0]);
+                  action.play();
+                  this._mixer = mixer;
+                }
+              });
+            }
+          }, undefined, (err) => {
+            console.error('[load-fbx] Failed to load:', this.data.src, err);
+          });
+        },
+
+        tick(t, dt) {
+          if (this._mixer) this._mixer.update(dt / 1000);
+        },
+
+        remove() {
+          this.el.removeObject3D('mesh');
+        }
+      });
+    </script>
+
     <style>
       #ui-overlay {
         position: fixed;
@@ -23,6 +80,7 @@
         display: flex;
         flex-direction: column;
         gap: 10px;
+        max-width: 220px;
       }
       button {
         cursor: pointer;
@@ -45,25 +103,19 @@
     </div>
 
     <!-- AR Scene -->
-    <a-scene 
-      embedded 
+    <a-scene
+      embedded
       arjs="sourceType: webcam; debugUIEnabled: false; detectionMode: mono_and_matrix; matrixCodeType: 3x3;"
       cursor="rayOrigin: mouse"
       raycaster="objects: .interactable">
-      
-      <a-assets>
-        <!-- External FBX Models -->
-        <a-asset-item id="model-ch06" src="model/Ch06_nonPBR (1).fbx"></a-asset-item>
-        <a-asset-item id="model-animation" src="animation/Crouch To Stand.fbx"></a-asset-item>
-      </a-assets>
 
-      <!-- Marker 1: Fetch Stage (Hiro) - Keep primitive for variety or if you want to test P2P quickly -->
+      <!-- ── Marker 1: FETCH (Hiro) – spinning torus knot ────────────────── -->
       <a-marker preset="hiro" id="marker-fetch">
-        <a-torus-knot 
+        <a-torus-knot
           id="obj-fetch"
           class="interactable"
-          radius="0.26" 
-          radius-tubular="0.05" 
+          radius="0.26"
+          radius-tubular="0.05"
           position="0 0.5 0"
           material="color: #4CC3D9; metalness: 0.5; roughness: 0.2"
           animation="property: rotation; to: 0 360 0; loop: true; dur: 3000; easing: linear">
@@ -71,28 +123,26 @@
         <a-text value="FETCH" position="0 1.2 0" align="center" color="#4CC3D9"></a-text>
       </a-marker>
 
-      <!-- Marker 2: Decode Stage (Kanji) - Using Ch06 FBX -->
+      <!-- ── Marker 2: DECODE (Kanji) – Ch06 character model ─────────────── -->
       <a-marker preset="kanji" id="marker-decode">
-        <a-entity 
+        <a-entity
           id="obj-decode"
           class="interactable"
-          fbx-model="src: #model-ch06;" 
-          scale="0.005 0.005 0.005"
+          load-fbx="src: model/Ch06_nonPBR (1).fbx; scale: 0.01"
           position="0 0 0"
-          animation="property: rotation; to: 0 360 0; loop: true; dur: 10000; easing: linear">
+          rotation="0 0 0">
         </a-entity>
         <a-text value="DECODE" position="0 1.5 0" align="center" color="#EF2D5E"></a-text>
       </a-marker>
 
-      <!-- Marker 3: Execute Stage (Barcode ID 0) - Using Crouch FBX with Animation -->
+      <!-- ── Marker 3: EXECUTE (Barcode 0) – Crouch→Stand animation ──────── -->
       <a-marker type="barcode" value="0" id="marker-execute">
-        <a-entity 
+        <a-entity
           id="obj-execute"
           class="interactable"
-          fbx-model="src: #model-animation;" 
-          scale="0.005 0.005 0.005"
+          load-fbx="src: model/Ch06_nonPBR (1).fbx; animSrc: animation/Crouch To Stand.fbx; scale: 0.01"
           position="0 0 0"
-          animation-mixer="clip: *; loop: repeat; timeScale: 1">
+          rotation="0 0 0">
         </a-entity>
         <a-text value="EXECUTE" position="0 1.5 0" align="center" color="#FFC65D"></a-text>
       </a-marker>
@@ -101,13 +151,13 @@
     </a-scene>
 
     <script>
-      // --- P2P Networking Logic (PeerJS) ---
+      // ─── P2P Networking Logic (PeerJS) ───────────────────────────────────
       const urlParams = new URLSearchParams(window.location.search);
       const roomParam = urlParams.get('room');
-      const peer = new Peer(); 
-      
-      let conn = null;
-      let isHost = !roomParam;
+      const peer      = new Peer();
+
+      let conn    = null;
+      let isHost  = !roomParam;
 
       peer.on('open', (id) => {
         if (isHost) {
@@ -127,15 +177,15 @@
       peer.on('connection', (c) => {
         conn = c;
         setupConn();
-        document.getElementById('peer-status').innerText = "Connected to Peer";
+        document.getElementById('peer-status').innerText = 'Connected to Peer';
       });
 
       function connectToPeer(remoteId) {
         conn = peer.connect(remoteId);
-        setupConn();
         conn.on('open', () => {
-          document.getElementById('peer-status').innerText = `Connected to Host`;
-          document.getElementById('room-info').innerText = `In Room: ${remoteId.substring(0, 6)}`;
+          setupConn();
+          document.getElementById('peer-status').innerText = 'Connected to Host';
+          document.getElementById('room-info').innerText  = `In Room: ${remoteId.substring(0, 6)}`;
         });
       }
 
@@ -143,18 +193,11 @@
         conn.on('data', (data) => {
           if (data.type === 'interaction') {
             const el = document.getElementById(data.id);
-            if (el) {
-              // Simplified interaction for FBX: quick flash or nudge
-              console.log("Peer interacted with:", data.id);
-              el.setAttribute('animation__nudge', {
-                property: 'position',
-                to: '0 0.2 0',
-                dir: 'alternate',
-                dur: 100,
-                loop: 2
-              });
-            }
+            if (el) nudge(el);
           }
+        });
+        conn.on('close', () => {
+          document.getElementById('peer-status').innerText = 'Waiting for connection...';
         });
       }
 
@@ -162,23 +205,18 @@
         if (conn && conn.open) conn.send(data);
       }
 
-      // --- Interaction Logic ---
+      function nudge(el) {
+        el.setAttribute('animation__nudge', {
+          property: 'position', to: '0 0.2 0',
+          dir: 'alternate', dur: 150, loop: 2
+        });
+      }
+
+      // ─── Interaction: click an object to nudge it (syncs to peer) ────────
       document.querySelectorAll('.interactable').forEach(el => {
         el.addEventListener('click', () => {
-          // Visual feedback
-          el.setAttribute('animation__nudge', {
-            property: 'position',
-            to: '0 0.2 0',
-            dir: 'alternate',
-            dur: 100,
-            loop: 2
-          });
-          
-          // Sync with peer
-          broadcast({
-            type: 'interaction',
-            id: el.id
-          });
+          nudge(el);
+          broadcast({ type: 'interaction', id: el.id });
         });
       });
     </script>
