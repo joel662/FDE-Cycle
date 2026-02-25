@@ -64,6 +64,90 @@
           this.el.removeObject3D('mesh');
         }
       });
+
+      // ─── Custom A-Frame component: conveyor-instructions ─────────────────
+      // Shows one assembly instruction chip at a time on the belt.
+      // Starts when the marker is found, pauses when lost.
+      AFRAME.registerComponent('conveyor-instructions', {
+        init() {
+          this.instructions = ['ADD 5, 3', 'SUB 9, 4', 'MOV 42, AX', 'CMP 12, 8'];
+          this.colors       = ['#00FF88',  '#FF6B6B',  '#FFD93D',   '#C77DFF'];
+          this.CHIP_DUR = 10000;                             // ms per chip
+          this.CYCLE    = this.instructions.length * this.CHIP_DUR; // 40 000ms full loop
+          this.active   = false;
+
+          this.el.sceneEl.addEventListener('loaded', () => {
+            this.chip      = document.getElementById('asm-chip');
+            this.topText   = document.getElementById('chip-top');
+            this.frontText = document.getElementById('chip-front');
+
+            const marker = document.getElementById('marker-conveyor');
+            marker.addEventListener('markerFound', () => this.start());
+            marker.addEventListener('markerLost',  () => this.stop());
+
+            // When a chip finishes its run, immediately compute & show the next
+            // (showChip uses wall-clock time, so it auto-picks the right one)
+            this.chip.addEventListener('animationcomplete', () => {
+              if (!this.active) return;
+              setTimeout(() => this.showChip(), 100);
+            });
+          });
+        },
+
+        start() {
+          if (this.active) return;
+          this.active = true;
+          this.showChip();   // resume wherever the clock says we are
+        },
+
+        stop() {
+          this.active = false;
+          if (this.chip) this.chip.setAttribute('visible', false);
+        },
+
+        showChip() {
+          if (!this.active || !this.chip) return;
+
+          // ── Wall-clock position ───────────────────────────────────────────
+          // All peers share the same Date.now(), so this is automatically
+          // in sync across the multiplayer session without any extra messages.
+          const cyclePos  = Date.now() % this.CYCLE;          // 0‥39 999 ms
+          const idx       = Math.floor(cyclePos / this.CHIP_DUR); // 0‥3
+          const elapsed   = cyclePos % this.CHIP_DUR;             // ms into this chip
+          const remaining = this.CHIP_DUR - elapsed;               // ms left
+
+          // Map elapsed time to X position on the belt (-0.80 → 0.85)
+          const totalDist = 1.65;
+          const startX    = -0.80 + totalDist * (elapsed / this.CHIP_DUR);
+
+          const instr = this.instructions[idx];
+          const color = this.colors[idx];
+
+          this.topText.setAttribute('value', instr);
+          this.topText.setAttribute('color', color);
+          this.frontText.setAttribute('value', instr);
+          this.frontText.setAttribute('color', color);
+
+          // Snap chip to its current mid-belt position
+          this.chip.setAttribute('position', `${startX.toFixed(3)} 0.29 0`);
+          this.chip.setAttribute('visible', true);
+
+          // Remove old animation so A-Frame creates a fresh component
+          // (guarantees animationcomplete fires reliably every time)
+          this.chip.removeAttribute('animation');
+          setTimeout(() => {
+            if (!this.active) return;
+            this.chip.setAttribute('animation', {
+              property: 'position',
+              from: `${startX.toFixed(3)} 0.29 0`,
+              to:   '0.85 0.29 0',
+              loop: false,
+              dur:  remaining,
+              easing: 'linear'
+            });
+          }, 50);
+        }
+      });
     </script>
 
     <style>
@@ -110,7 +194,7 @@
       raycaster="objects: .interactable">
 
       <!-- ── Marker 1: FETCH (Hiro) – spinning torus knot ────────────────── -->
-      <a-marker preset="hiro" id="marker-fetch">
+      <a-marker type="barcode" value="2" id="marker-fetch">
         <a-torus-knot
           id="obj-fetch"
           class="interactable"
@@ -124,7 +208,7 @@
       </a-marker>
 
       <!-- ── Marker 2: DECODE (Kanji) – Ch06 character model ─────────────── -->
-      <a-marker preset="kanji" id="marker-decode">
+      <a-marker type="barcode" value="1" id="marker-decode">
         <a-entity
           id="obj-decode"
           class="interactable"
@@ -135,16 +219,74 @@
         <a-text value="DECODE" position="0 1.5 0" align="center" color="#EF2D5E"></a-text>
       </a-marker>
 
-      <!-- ── Marker 3: EXECUTE (Barcode 0) – Crouch→Stand animation ──────── -->
-      <a-marker type="barcode" value="0" id="marker-execute">
+      <!-- ── Marker 0: EXECUTE (Barcode 0) – Conveyor GLTF model ──────────── -->
+      <a-marker type="barcode" value="3" id="marker-execute">
         <a-entity
           id="obj-execute"
           class="interactable"
-          load-fbx="src: model/Ch06_nonPBR (1).fbx; animSrc: animation/Crouch To Stand.fbx; scale: 0.01"
+          gltf-model="model/conveyor.gltf"
           position="0 0 0"
-          rotation="0 0 0">
+          rotation="0 0 0"
+          scale="1 1 1">
         </a-entity>
         <a-text value="EXECUTE" position="0 1.5 0" align="center" color="#FFC65D"></a-text>
+      </a-marker>
+
+      <!-- ── Marker 3: CONVEYOR BELT (Barcode 3) – procedural primitives ──── -->
+      <a-marker type="barcode" value="0" id="marker-conveyor">
+        <a-entity id="obj-conveyor" class="interactable" position="0 0 0" conveyor-instructions>
+
+          <!-- Belt surface (scrolling dark strip) -->
+          <a-box
+            id="belt-surface"
+            width="1.6" height="0.04" depth="0.5"
+            position="0 0.22 0"
+            material="color: #222; repeat: 4 1;"
+            animation__scroll="property: material.repeat; from: 0 0; to: 4 0; loop: true; dur: 1800; easing: linear">
+          </a-box>
+
+          <!-- Frame sides (left & right long rails) -->
+          <a-box width="1.7" height="0.06" depth="0.06" position="0 0.16 0.23"
+            material="color: #888; metalness:0.6; roughness:0.3"></a-box>
+          <a-box width="1.7" height="0.06" depth="0.06" position="0 0.16 -0.23"
+            material="color: #888; metalness:0.6; roughness:0.3"></a-box>
+
+          <!-- Legs -->
+          <a-box width="0.05" height="0.3" depth="0.05" position="-0.75 0.0 0.22"
+            material="color: #666"></a-box>
+          <a-box width="0.05" height="0.3" depth="0.05" position="0.75 0.0 0.22"
+            material="color: #666"></a-box>
+          <a-box width="0.05" height="0.3" depth="0.05" position="-0.75 0.0 -0.22"
+            material="color: #666"></a-box>
+          <a-box width="0.05" height="0.3" depth="0.05" position="0.75 0.0 -0.22"
+            material="color: #666"></a-box>
+
+          <!-- Rollers (left & right end cylinders) -->
+          <a-cylinder radius="0.06" height="0.52" position="-0.8 0.22 0"
+            rotation="90 0 0"
+            material="color: #555; metalness:0.8; roughness:0.2"
+            animation="property: rotation; from: 90 0 0; to: 90 360 0; loop: true; dur: 1200; easing: linear">
+          </a-cylinder>
+          <a-cylinder radius="0.06" height="0.52" position="0.8 0.22 0"
+            rotation="90 0 0"
+            material="color: #555; metalness:0.8; roughness:0.2"
+            animation="property: rotation; from: 90 0 0; to: 90 360 0; loop: true; dur: 1200; easing: linear">
+          </a-cylinder>
+
+          <!-- ── Single managed chip – controlled by conveyor-instructions component ── -->
+          <a-entity id="asm-chip" visible="false" position="-0.80 0.29 0">
+            <a-box width="0.28" height="0.08" depth="0.18"
+              material="color: #1a1a2e; metalness:0.3; roughness:0.7"></a-box>
+            <!-- top-down label (readable from AR camera above) -->
+            <a-text id="chip-top" value="" position="0 0.05 0" rotation="-90 0 0"
+              align="center" color="#00FF88" width="1.4" wrap-count="12"></a-text>
+            <!-- front-face label (readable from the side) -->
+            <a-text id="chip-front" value="" position="0 0 0.09" rotation="0 0 0"
+              align="center" color="#00FF88" width="1.2" wrap-count="12"></a-text>
+          </a-entity>
+
+        </a-entity>
+        <a-text value="CONVEYOR" position="0 1.2 0" align="center" color="#F39C12"></a-text>
       </a-marker>
 
       <a-entity camera></a-entity>
