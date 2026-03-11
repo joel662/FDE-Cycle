@@ -17,12 +17,18 @@
       // ─── Custom A-Frame component: conveyor-instructions ─────────────────
       AFRAME.registerComponent('conveyor-instructions', {
         init() {
-          this.instructions = ['ADD 5, 3', 'SUB 9, 4', 'MOV 42, AX', 'CMP 12, 8'];
-          this.colors       = ['#00FF88',  '#FF6B6B',  '#FFD93D',   '#C77DFF'];
+          this.instrSet = ['ADD', 'SUB', 'STA'];
+          this.colorSet = {
+            'ADD': '#00FF88',
+            'SUB': '#FF6B6B',
+            'STA': '#FFD93D'
+          };
           this.CHIP_DUR = 10000;
-          this.CYCLE    = this.instructions.length * this.CHIP_DUR;
+          this.CYCLE    = this.CHIP_DUR;
           this.active   = false;
-          this.timeOffset = 0; // Tracks manual skips
+          this.timeOffset = 0;
+          this.currentInstr = ""; 
+          this.currentColor = "";
 
           this.el.sceneEl.addEventListener('loaded', () => {
             this.chip      = document.getElementById('asm-chip');
@@ -61,8 +67,8 @@
           if (!this.active) return;
           
           // Calculate time remaining in current instruction slot and skip forward
-          const cyclePos = (Date.now() + this.timeOffset) % this.CYCLE;
-          const elapsed  = cyclePos % this.CHIP_DUR;
+          const cyclePos = (Date.now() + this.timeOffset) % this.CHIP_DUR;
+          const elapsed  = cyclePos;
           const remaining = this.CHIP_DUR - elapsed;
           
           this.timeOffset += remaining; 
@@ -72,21 +78,23 @@
         showChip() {
           if (!this.active || !this.chip) return;
 
-          const cyclePos  = (Date.now() + this.timeOffset) % this.CYCLE;
-          const idx       = Math.floor(cyclePos / this.CHIP_DUR);
-          const elapsed   = cyclePos % this.CHIP_DUR;
+          const cyclePos  = (Date.now() + this.timeOffset) % this.CHIP_DUR;
+          const elapsed   = cyclePos;
           const remaining = this.CHIP_DUR - elapsed;
 
+          // Generate a new random instruction if it's the start of a cycle or if we don't have one
+          const opcode = this.instrSet[Math.floor(Math.random() * this.instrSet.length)];
+          const addr = Math.floor(Math.random() * 25).toString().padStart(2, '0');
+          this.currentInstr = `${opcode} ${addr}`;
+          this.currentColor = this.colorSet[opcode];
+
           const totalDist = 1.65;
-          const startX    = -0.80 + totalDist * (elapsed / this.CHIP_DUR);
+          const startX    = -0.80; // Always start at the beginning for the randomized experience
 
-          const instr = this.instructions[idx];
-          const color = this.colors[idx];
-
-          this.topText.setAttribute('value', instr);
-          this.topText.setAttribute('color', color);
-          this.frontText.setAttribute('value', instr);
-          this.frontText.setAttribute('color', color);
+          this.topText.setAttribute('value', this.currentInstr);
+          this.topText.setAttribute('color', this.currentColor);
+          this.frontText.setAttribute('value', this.currentInstr);
+          this.frontText.setAttribute('color', this.currentColor);
 
           this.chip.setAttribute('position', `${startX.toFixed(3)} 0.29 0`);
           this.chip.setAttribute('visible', true);
@@ -99,10 +107,496 @@
               from: `${startX.toFixed(3)} 0.29 0`,
               to:   '0.85 0.29 0',
               loop: false,
-              dur:  remaining,
+              dur:  this.CHIP_DUR,
               easing: 'linear'
             });
           }, 50);
+        }
+      });
+
+      // ─── RAM Grid Component ──────────────────────────────────────────────
+      AFRAME.registerComponent('ram-grid', {
+        init() {
+          // Baseplate (PCB)
+          const base = document.createElement('a-box');
+          base.setAttribute('width', 1.8);
+          base.setAttribute('height', 0.05);
+          base.setAttribute('depth', 1.8);
+          base.setAttribute('position', '0 -0.025 0');
+          base.setAttribute('material', 'color: #0a3a2a; metalness: 0.6; roughness: 0.4');
+          this.el.appendChild(base);
+
+          const rows = 5;
+          const cols = 5;
+          const spacing = 0.3;
+          const startX = -((cols - 1) * spacing) / 2;
+          const startZ = -((rows - 1) * spacing) / 2;
+
+          for (let r = 0; r < rows; r++) {
+            for (let c = 0; c < cols; c++) {
+              const addr = r * cols + c;
+              const cell = document.createElement('a-entity');
+              cell.setAttribute('position', `${startX + c * spacing} 0.02 ${startZ + r * spacing}`);
+              cell.setAttribute('id', `ram-cell-${addr}`);
+              
+              // Cell Box (Raised 3D Block)
+              const box = document.createElement('a-box');
+              box.setAttribute('width', 0.25);
+              box.setAttribute('height', 0.1);
+              box.setAttribute('depth', 0.25);
+              box.setAttribute('position', '0 0.05 0');
+              box.setAttribute('material', 'color: #1a1a2e; metalness: 0.3; roughness: 0.7; emissive: #00FF88; emissiveIntensity: 0.1');
+              cell.appendChild(box);
+
+              // Address Label
+              const addrLabel = document.createElement('a-text');
+              addrLabel.setAttribute('value', addr < 10 ? '0' + addr : addr);
+              addrLabel.setAttribute('position', '-0.1 0.11 -0.09');
+              addrLabel.setAttribute('rotation', '-90 0 0');
+              addrLabel.setAttribute('color', '#aaa');
+              addrLabel.setAttribute('width', 0.8);
+              addrLabel.setAttribute('align', 'center');
+              cell.appendChild(addrLabel);
+
+              // Value Label
+              const valLabel = document.createElement('a-text');
+              const randomVal = Math.floor(Math.random() * 999).toString().padStart(3, '0');
+              valLabel.setAttribute('value', randomVal);
+              valLabel.setAttribute('position', '0 0.11 0');
+              valLabel.setAttribute('rotation', '-90 0 0');
+              valLabel.setAttribute('color', '#00FF88');
+              valLabel.setAttribute('width', 1.5);
+              valLabel.setAttribute('align', 'center');
+              valLabel.setAttribute('id', `ram-val-${addr}`);
+              cell.appendChild(valLabel);
+
+              this.el.appendChild(cell);
+            }
+          }
+        }
+      });
+
+      // ─── CPU Display Component ───────────────────────────────────────────
+      AFRAME.registerComponent('cpu-display', {
+        init() {
+          // Motherboard Base
+          const base = document.createElement('a-box');
+          base.setAttribute('width', 2.2);
+          base.setAttribute('height', 0.05);
+          base.setAttribute('depth', 1.8);
+          base.setAttribute('position', '0 -0.025 0');
+          base.setAttribute('material', 'color: #0a3a2a; metalness: 0.6; roughness: 0.4');
+          this.el.appendChild(base);
+
+          // Add some 3D "Buses" (connection lines)
+          this.createBus('-0.4 0.01 0', '0.8 0.02 0.02', '0 0 0'); // Left to Right
+          this.createBus('0 0.01 -0.2', '0.02 0.02 0.8', '0 0 0'); // Top to Bottom (Register column)
+
+          // Layout: CU on left, Registers in center, ALU on right
+          const cu = this.createCU();
+          cu.setAttribute('position', '-0.7 0.05 -0.1');
+          this.el.appendChild(cu);
+
+          const regs = this.createRegisters();
+          regs.setAttribute('position', '0 0.05 0');
+          this.el.appendChild(regs);
+
+          const alu = this.createALU();
+          alu.setAttribute('position', '0.7 0.05 0.2');
+          this.el.appendChild(alu);
+        },
+
+        createBus(pos, scale, rot) {
+          const bus = document.createElement('a-cylinder');
+          bus.setAttribute('position', pos);
+          bus.setAttribute('height', 1);
+          bus.setAttribute('radius', 0.01);
+          bus.setAttribute('rotation', '90 90 0');
+          if (scale.startsWith('0.02')) bus.setAttribute('rotation', '90 0 0'); // Vertical
+          
+          bus.setAttribute('scale', scale);
+          bus.setAttribute('material', 'color: #00ffff; opacity: 0.3; transparent: true; emissive: #00ffff; emissiveIntensity: 0.5');
+          this.el.appendChild(bus);
+        },
+
+        createCU() {
+          const cu = document.createElement('a-entity');
+          
+          // Background Panel (Thick 3D Box)
+          const panel = document.createElement('a-box');
+          panel.setAttribute('width', 0.8);
+          panel.setAttribute('height', 0.1);
+          panel.setAttribute('depth', 1.2);
+          panel.setAttribute('material', 'color: #222; metalness: 0.5');
+          cu.appendChild(panel);
+
+          const title = document.createElement('a-text');
+          title.setAttribute('value', 'CONTROL UNIT');
+          title.setAttribute('position', '0 0.06 -0.5');
+          title.setAttribute('rotation', '-90 0 0');
+          title.setAttribute('align', 'center');
+          title.setAttribute('width', 1.5);
+          cu.appendChild(title);
+
+          // Opcode/Operand displays...
+          this.createDisplay(cu, 'Opcode', '0', -0.2, -0.3);
+          this.createDisplay(cu, 'Operand', '00', 0.2, -0.3);
+
+          // Instruction Set Reference
+          const instrSet = document.createElement('a-entity');
+          instrSet.setAttribute('position', '0 0.03 0.2');
+          const instrs = [
+            'ADD 1xx', 'SUB 2xx', 'STA 3xx', 'LDA 5xx',
+            'BRA 6xx', 'BRZ 7xx', 'BRP 8xx', 'INP 901',
+            'OUT 902', 'HLT 0xx'
+          ];
+          instrs.forEach((t, i) => {
+            const row = Math.floor(i / 2);
+            const col = i % 2;
+            const text = document.createElement('a-text');
+            text.setAttribute('value', t);
+            text.setAttribute('position', `${-0.25 + col * 0.5} 0.06 ${row * 0.15}`);
+            text.setAttribute('rotation', '-90 0 0');
+            text.setAttribute('width', 1);
+            text.setAttribute('align', 'center');
+            text.setAttribute('color', t.startsWith('HLT') ? '#ff6b6b' : '#eee');
+            instrSet.appendChild(text);
+          });
+          cu.appendChild(instrSet);
+
+          return cu;
+        },
+
+        createDisplay(parent, labelText, defaultVal, x, z) {
+          const container = document.createElement('a-entity');
+          container.setAttribute('position', `${x} 0.06 ${z}`);
+
+          const label = document.createElement('a-text');
+          label.setAttribute('value', labelText);
+          label.setAttribute('position', '0 0.01 -0.1');
+          label.setAttribute('rotation', '-90 0 0');
+          label.setAttribute('align', 'center');
+          label.setAttribute('width', 1);
+          label.setAttribute('color', '#ffb3ba');
+          container.appendChild(label);
+
+          const val = document.createElement('a-text');
+          val.setAttribute('value', defaultVal);
+          val.setAttribute('rotation', '-90 0 0');
+          val.setAttribute('align', 'center');
+          val.setAttribute('width', 2);
+          val.setAttribute('color', '#fff');
+          val.setAttribute('id', `cpu-${labelText.toLowerCase()}`);
+          container.appendChild(val);
+
+          parent.appendChild(container);
+        },
+
+        createRegisters() {
+          const regs = document.createElement('a-entity');
+          const registerList = ['PC', 'MAR', 'CIR', 'MDR', 'ACC'];
+          const spacing = 0.2;
+
+          registerList.forEach((name, i) => {
+            const reg = document.createElement('a-entity');
+            reg.setAttribute('position', `0 0.01 ${-0.4 + i * spacing}`);
+
+            // 3D block for register
+            const regBox = document.createElement('a-box');
+            regBox.setAttribute('width', 0.6);
+            regBox.setAttribute('height', 0.1);
+            regBox.setAttribute('depth', 0.15);
+            regBox.setAttribute('material', 'color: #333; metalness: 0.2');
+            reg.appendChild(regBox);
+
+            const label = document.createElement('a-text');
+            label.setAttribute('value', name);
+            label.setAttribute('position', '-0.2 0.06 0');
+            label.setAttribute('rotation', '-90 0 0');
+            label.setAttribute('width', 1.5);
+            label.setAttribute('color', '#bae1ff');
+            reg.appendChild(label);
+
+            const val = document.createElement('a-text');
+            val.setAttribute('value', name === 'PC' ? '00' : '000');
+            val.setAttribute('position', '0.1 0.06 0');
+            val.setAttribute('rotation', '-90 0 0');
+            val.setAttribute('width', 2);
+            val.setAttribute('id', `reg-${name.toLowerCase()}`);
+            reg.appendChild(val);
+
+            regs.appendChild(reg);
+          });
+
+          return regs;
+        },
+
+        createALU() {
+          const alu = document.createElement('a-entity');
+          alu.setAttribute('alu', ''); // Flag for logic
+          
+          const box = document.createElement('a-box');
+          box.setAttribute('width', 0.6);
+          box.setAttribute('height', 0.3);
+          box.setAttribute('depth', 0.8);
+          box.setAttribute('material', 'color: #444; metalness: 0.9; roughness: 0.1; emissive: #ff00ff; emissiveIntensity: 0.1');
+          alu.appendChild(box);
+
+          const text = document.createElement('a-text');
+          text.setAttribute('value', 'ALU');
+          text.setAttribute('position', '0 0.16 0');
+          text.setAttribute('rotation', '-90 0 0');
+          text.setAttribute('align', 'center');
+          text.setAttribute('width', 3);
+          text.setAttribute('color', '#ffffba');
+          alu.appendChild(text);
+
+          return alu;
+        }
+      });
+
+      // ─── FDE Controller Component ───────────────────────────────────────
+      AFRAME.registerComponent('fde-controller', {
+        init() {
+          this.state = 'IDLE'; // IDLE, FETCHING, DECODING, EXECUTING
+          this.currentInstruction = null;
+          this.pc = 0;
+          this.visibleMarkers = new Set();
+
+          // Create "Raw Data" Packet entity
+          this.packet = document.createElement('a-entity');
+          this.packet.setAttribute('visible', false);
+          
+          const pBox = document.createElement('a-box');
+          pBox.setAttribute('width', 0.12);
+          pBox.setAttribute('height', 0.12);
+          pBox.setAttribute('depth', 0.12);
+          pBox.setAttribute('material', 'color: #FFC65D; emissive: #FFC65D; emissiveIntensity: 1; opacity: 0.8; transparent: true');
+          this.packet.appendChild(pBox);
+
+          this.packetText = document.createElement('a-text');
+          this.packetText.setAttribute('value', '000');
+          this.packetText.setAttribute('align', 'center');
+          this.packetText.setAttribute('position', '0 0.1 0');
+          this.packetText.setAttribute('scale', '0.5 0.5 0.5');
+          this.packetText.setAttribute('color', '#000');
+          this.packet.appendChild(this.packetText);
+
+          this.el.sceneEl.appendChild(this.packet);
+
+          // Track marker visibility
+          const markers = ['marker-execute', 'marker-ram', 'marker-cpu'];
+          markers.forEach(id => {
+            const m = document.getElementById(id);
+            if (m) {
+              m.addEventListener('markerFound', () => { this.visibleMarkers.add(id); this.updateButtons(); });
+              m.addEventListener('markerLost', () => { this.visibleMarkers.delete(id); this.updateButtons(); });
+            }
+          });
+
+          // State change event listeners
+          this.el.sceneEl.addEventListener('fetch-instruction', (e) => this.fetch(e.detail.instruction));
+          
+          document.getElementById('decode-btn').onclick = () => this.decode();
+          document.getElementById('execute-btn').onclick = () => this.execute();
+
+          // Initialize visibility
+          this.updateButtons();
+        },
+
+        updateButtons() {
+            const mExecute = this.visibleMarkers.has('marker-execute');
+            const mCPU = this.visibleMarkers.has('marker-cpu');
+
+            document.getElementById('fetch-btn').style.display = (this.state === 'IDLE' && mExecute) ? 'block' : 'none';
+            document.getElementById('decode-btn').style.display = (this.state === 'DECODED_READY' && mCPU) ? 'block' : 'none';
+            document.getElementById('execute-btn').style.display = (this.state === 'EXECUTED_READY' && mCPU) ? 'block' : 'none';
+        },
+
+        fetch(instruction) {
+          if (this.state !== 'IDLE') return;
+          this.state = 'FETCHING';
+          this.updateButtons();
+          this.currentInstruction = instruction;
+          
+          showDataCollected(`FETCH: ${instruction}`);
+          
+          // Animate packet from Marker 0 to CPU
+          const m0 = document.getElementById('marker-execute');
+          const m2 = document.getElementById('marker-cpu');
+          this.animatePacket(m0, m2, instruction, () => {
+             document.getElementById('reg-cir').setAttribute('value', instruction);
+             this.state = 'DECODED_READY';
+             this.updateButtons();
+             showDataCollected("FETCH COMPLETE. Press DECODE.");
+          });
+        },
+
+        decode() {
+          if (this.state !== 'DECODED_READY') return;
+          this.state = 'DECODING';
+          this.updateButtons();
+          const instr = this.currentInstruction; // e.g., "ADD 05"
+          
+          let opcode = '0';
+          let operand = '00';
+          
+          if (instr.startsWith('ADD')) { opcode = '1'; operand = instr.split(' ')[1]; }
+          else if (instr.startsWith('SUB')) { opcode = '2'; operand = instr.split(' ')[1]; }
+          else if (instr.startsWith('STA')) { opcode = '3'; operand = instr.split(' ')[1]; }
+
+          document.getElementById('cpu-opcode').setAttribute('value', opcode);
+          document.getElementById('cpu-operand').setAttribute('value', operand);
+          
+          showDataCollected(`DECODE: Op:${opcode} Arg:${operand}`);
+          this.state = 'EXECUTED_READY';
+          this.updateButtons();
+          showDataCollected("DECODE COMPLETE. Press EXECUTE.");
+        },
+
+        execute() {
+          if (this.state !== 'EXECUTED_READY') return;
+          this.state = 'EXECUTING';
+          this.updateButtons();
+          const opcode = document.getElementById('cpu-opcode').getAttribute('value');
+          const operand = document.getElementById('cpu-operand').getAttribute('value');
+          const accVal = document.getElementById('reg-acc').getAttribute('value');
+          
+          showDataCollected(`EXECUTE: ${opcode}${operand}`);
+          
+          const cpu = document.getElementById('marker-cpu');
+          const ramMarker = document.getElementById('marker-ram');
+
+          if (opcode === '3') { // STA (Store Accumulator to RAM)
+             const targetAddr = parseInt(operand);
+             const targetCell = document.getElementById(`ram-cell-${targetAddr}`);
+             if (targetCell) {
+               showDataCollected(`STORING ${accVal} TO RAM ADDR ${targetAddr}`);
+               this.animatePacket(cpu, ramMarker, accVal, () => {
+                 const valEl = document.getElementById(`ram-val-${targetAddr}`);
+                 if (valEl) valEl.setAttribute('value', accVal);
+                 this.pulseCell(targetCell);
+                 this.finishExecute();
+               });
+               return; 
+             }
+          } else if (opcode === '1' || opcode === '2') { // ADD / SUB
+             const targetAddr = parseInt(operand);
+             const targetCell = document.getElementById(`ram-cell-${targetAddr}`);
+             
+             if (targetCell) {
+               showDataCollected(`FETCHING VALUE FROM RAM ADDR ${targetAddr} FOR ALU`);
+               
+               // Phase 1: Fetch from RAM to CPU
+               this.animatePacket(ramMarker, cpu, "DATA", () => {
+                 showDataCollected("ALU processing...");
+                 
+                 // Get actual value for the label
+                 const ramValEl = document.getElementById(`ram-val-${targetAddr}`);
+                 const ramVal = ramValEl ? ramValEl.getAttribute('value') : "000";
+
+                 // Phase 2: Move both RAM value and ACC value into ALU
+                 // We'll simulate this with sequential animations for simplicity
+                 this.animatePacket(cpu, cpu, ramVal, () => { // Marker 2 to Marker 2 (Intra-CPU)
+                    this.pulseALU();
+                    
+                    let currentAccValue = parseInt(accVal) || 0;
+                    let incomingVal = parseInt(ramVal) || 0;
+                    let result = (opcode === '1') ? currentAccValue + incomingVal : currentAccValue - incomingVal;
+                    result = Math.max(0, Math.min(999, result));
+                    const resultStr = result.toString().padStart(3, '0');
+
+                    // Phase 3: Move result back to ACC
+                    setTimeout(() => {
+                        this.animatePacket(cpu, cpu, resultStr, () => {
+                            document.getElementById('reg-acc').setAttribute('value', resultStr);
+                            this.finishExecute();
+                        });
+                    }, 500);
+                 }, true); // Use 'true' flag for internal CPU move offset logic if needed
+               });
+               return;
+             }
+          }
+
+          this.finishExecute();
+        },
+
+        pulseALU() {
+          const alu = document.querySelector('[alu]');
+          if (alu) {
+            alu.setAttribute('animation__pulse', {
+               property: 'material.emissiveIntensity',
+               from: 0.1,
+               to: 2,
+               dur: 300,
+               dir: 'alternate',
+               loop: 4
+            });
+          }
+        },
+
+        finishExecute() {
+          this.pc = (this.pc + 1) % 25;
+          document.getElementById('reg-pc').setAttribute('value', this.pc.toString().padStart(2, '0'));
+          this.state = 'IDLE';
+          this.updateButtons();
+          showDataCollected("CYCLE COMPLETE. PC incremented.");
+        },
+
+        pulseCell(el) {
+          el.setAttribute('animation__pulse', {
+            property: 'scale',
+            from: '1 1 1',
+            to: '1.2 1.2 1.2',
+            dur: 200,
+            dir: 'alternate',
+            loop: 2
+          });
+        },
+
+        animatePacket(fromEl, toEl, value, callback, isIntraCPU = false) {
+          this.packet.setAttribute('visible', true);
+          this.packetText.setAttribute('value', value);
+          
+          const startPos = new THREE.Vector3();
+          const endPos = new THREE.Vector3();
+          
+          const duration = isIntraCPU ? 800 : 1500;
+          const startTime = Date.now();
+          
+          const update = () => {
+            const elapsed = Date.now() - startTime;
+            const t = Math.min(elapsed / duration, 1);
+            
+            fromEl.object3D.getWorldPosition(startPos);
+            toEl.object3D.getWorldPosition(endPos);
+            
+            // If intra-CPU, offset the points slightly so they aren't at the marker center
+            if (isIntraCPU) {
+               startPos.y += 0.2;
+               endPos.y += 0.2;
+               endPos.x += 0.5; // Move towards ALU
+            } else {
+               startPos.y += 0.1;
+               endPos.y += 0.1;
+            }
+            
+            const currentPos = new THREE.Vector3().lerpVectors(startPos, endPos, t);
+            this.packet.object3D.position.copy(currentPos);
+            
+            // Look at the camera so text is readable
+            this.packet.object3D.lookAt(this.el.sceneEl.camera.el.object3D.position);
+            
+            if (t < 1) {
+              requestAnimationFrame(update);
+            } else {
+              this.packet.setAttribute('visible', false);
+              if (callback) callback();
+            }
+          };
+          
+          update();
         }
       });
     </script>
@@ -121,7 +615,13 @@
         margin-top: 20px; text-align: center; width: 100%; border: 2px solid white;
         transition: transform 0.1s;
       }
-      #fetch-btn:active { transform: scale(0.95); }
+      #fetch-btn:active, #decode-btn:active, #execute-btn:active { transform: scale(0.95); }
+      #decode-btn, #execute-btn {
+        display: none; padding: 15px 30px; background: #C77DFF; color: white;
+        font-size: 1.5em; border-radius: 8px; box-shadow: 0 4px 10px rgba(0,0,0,0.5);
+        margin-top: 10px; text-align: center; width: 100%; border: 2px solid white;
+      }
+      #execute-btn { background: #FF6B6B; }
       #task-panel {
         position: fixed; bottom: 20px; right: 20px; z-index: 1000;
         background: rgba(26, 26, 46, 0.85); color: #00FF88; padding: 15px;
@@ -141,6 +641,8 @@
       <button id="copy-btn" style="display:none;">Copy Invite Link</button>
       <div id="peer-status" class="status">Waiting for connection...</div>
       <button id="fetch-btn">FETCH</button>
+      <button id="decode-btn">DECODE</button>
+      <button id="execute-btn">EXECUTE</button>
     </div>
     
     <div id="task-panel">
@@ -174,6 +676,18 @@
         </a-entity>
         
       </a-marker>
+
+      <!-- Marker 1: RAM Grid -->
+      <a-marker type="barcode" value="1" id="marker-ram">
+        <a-entity ram-grid position="0 0 0"></a-entity>
+      </a-marker>
+
+      <!-- Marker 2: CPU Display -->
+      <a-marker type="barcode" value="2" id="marker-cpu">
+        <a-entity cpu-display position="0 0 0"></a-entity>
+      </a-marker>
+
+      <a-entity fde-controller></a-entity>
 
       <a-entity camera></a-entity>
     </a-scene>
@@ -238,7 +752,10 @@
         const chipTop = document.getElementById('chip-top');
         if (chipTop) {
           const instruction = chipTop.getAttribute('value') || "Instruction";
-          showDataCollected(instruction);
+          
+          // Emit event to FDE controller
+          document.querySelector('a-scene').emit('fetch-instruction', { instruction: instruction });
+          
           if (conn && conn.open) conn.send({ type: 'interaction', id: 'fetch-btn', data: instruction });
           
           // Trigger the component to skip to next instruction
