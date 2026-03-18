@@ -1,788 +1,265 @@
 <!DOCTYPE html>
 <html>
-  <head>
-    <title>P2P AR Multiplayer - FDE CYCLE</title>
-    <!-- Core AR dependencies -->
-    <script src="https://aframe.io/releases/1.3.0/aframe.min.js"></script>
-    <script src="https://raw.githack.com/AR-js-org/AR.js/master/aframe/build/aframe-ar.js"></script>
-    <script src="https://cdn.jsdelivr.net/gh/donmccurdy/aframe-extras@v6.1.1/dist/aframe-extras.min.js"></script>
-    <!-- Three.js FBXLoader -->
-    <script src="https://cdn.jsdelivr.net/npm/fflate@0.8.2/umd/index.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/three@0.136.0/examples/js/loaders/FBXLoader.js"></script>
-    <!-- P2P networking -->
-    <script src="https://unpkg.com/peerjs@1.4.7/dist/peerjs.min.js"></script>
-
-    <script>
-
-      // ─── Custom A-Frame component: conveyor-instructions ─────────────────
-      AFRAME.registerComponent('conveyor-instructions', {
-        init() {
-          this.instrSet = ['ADD', 'SUB', 'STA'];
-          this.colorSet = {
-            'ADD': '#00FF88',
-            'SUB': '#FF6B6B',
-            'STA': '#FFD93D'
-          };
-          this.CHIP_DUR = 10000;
-          this.CYCLE    = this.CHIP_DUR;
-          this.active   = false;
-          this.timeOffset = 0;
-          this.currentInstr = ""; 
-          this.currentColor = "";
-
-          this.el.sceneEl.addEventListener('loaded', () => {
-            this.chip      = document.getElementById('asm-chip');
-            this.topText   = document.getElementById('chip-top');
-            this.frontText = document.getElementById('chip-front');
-
-            const marker = this.el.closest('a-marker');
-            if(marker) {
-              marker.addEventListener('markerFound', () => this.start());
-              marker.addEventListener('markerLost',  () => this.stop());
-            }
-
-            if (this.chip) {
-              this.chip.addEventListener('animationcomplete', () => {
-                if (!this.active) return;
-                setTimeout(() => this.showChip(), 100);
-              });
-            }
-          });
-        },
-
-        start() {
-          if (this.active) return;
-          this.active = true;
-          document.getElementById('fetch-btn').style.display = 'block';
-          this.showChip();
-        },
-
-        stop() {
-          this.active = false;
-          document.getElementById('fetch-btn').style.display = 'none';
-          if (this.chip) this.chip.setAttribute('visible', false);
-        },
-
-        skipToNext() {
-          if (!this.active) return;
-          
-          // Calculate time remaining in current instruction slot and skip forward
-          const cyclePos = (Date.now() + this.timeOffset) % this.CHIP_DUR;
-          const elapsed  = cyclePos;
-          const remaining = this.CHIP_DUR - elapsed;
-          
-          this.timeOffset += remaining; 
-          this.showChip(); // Restart animation with new offset
-        },
-
-        showChip() {
-          if (!this.active || !this.chip) return;
-
-          const cyclePos  = (Date.now() + this.timeOffset) % this.CHIP_DUR;
-          const elapsed   = cyclePos;
-          const remaining = this.CHIP_DUR - elapsed;
-
-          // Generate a new random instruction if it's the start of a cycle or if we don't have one
-          const opcode = this.instrSet[Math.floor(Math.random() * this.instrSet.length)];
-          const addr = Math.floor(Math.random() * 25).toString().padStart(2, '0');
-          this.currentInstr = `${opcode} ${addr}`;
-          this.currentColor = this.colorSet[opcode];
-
-          const totalDist = 1.65;
-          const startX    = -0.80; // Always start at the beginning for the randomized experience
-
-          this.topText.setAttribute('value', this.currentInstr);
-          this.topText.setAttribute('color', this.currentColor);
-          this.frontText.setAttribute('value', this.currentInstr);
-          this.frontText.setAttribute('color', this.currentColor);
-
-          this.chip.setAttribute('position', `${startX.toFixed(3)} 0.29 0`);
-          this.chip.setAttribute('visible', true);
-
-          this.chip.removeAttribute('animation');
-          setTimeout(() => {
-            if (!this.active) return;
-            this.chip.setAttribute('animation', {
-              property: 'position',
-              from: `${startX.toFixed(3)} 0.29 0`,
-              to:   '0.85 0.29 0',
-              loop: false,
-              dur:  this.CHIP_DUR,
-              easing: 'linear'
-            });
-          }, 50);
-        }
-      });
-
-      // ─── RAM Grid Component ──────────────────────────────────────────────
-      AFRAME.registerComponent('ram-grid', {
-        init() {
-          // Baseplate (PCB)
-          const base = document.createElement('a-box');
-          base.setAttribute('width', 1.8);
-          base.setAttribute('height', 0.05);
-          base.setAttribute('depth', 1.8);
-          base.setAttribute('position', '0 -0.025 0');
-          base.setAttribute('material', 'color: #0a3a2a; metalness: 0.6; roughness: 0.4');
-          this.el.appendChild(base);
-
-          const rows = 5;
-          const cols = 5;
-          const spacing = 0.3;
-          const startX = -((cols - 1) * spacing) / 2;
-          const startZ = -((rows - 1) * spacing) / 2;
-
-          for (let r = 0; r < rows; r++) {
-            for (let c = 0; c < cols; c++) {
-              const addr = r * cols + c;
-              const cell = document.createElement('a-entity');
-              cell.setAttribute('position', `${startX + c * spacing} 0.02 ${startZ + r * spacing}`);
-              cell.setAttribute('id', `ram-cell-${addr}`);
-              
-              // Cell Box (Raised 3D Block)
-              const box = document.createElement('a-box');
-              box.setAttribute('width', 0.25);
-              box.setAttribute('height', 0.1);
-              box.setAttribute('depth', 0.25);
-              box.setAttribute('position', '0 0.05 0');
-              box.setAttribute('material', 'color: #1a1a2e; metalness: 0.3; roughness: 0.7; emissive: #00FF88; emissiveIntensity: 0.1');
-              cell.appendChild(box);
-
-              // Address Label
-              const addrLabel = document.createElement('a-text');
-              addrLabel.setAttribute('value', addr < 10 ? '0' + addr : addr);
-              addrLabel.setAttribute('position', '-0.1 0.11 -0.09');
-              addrLabel.setAttribute('rotation', '-90 0 0');
-              addrLabel.setAttribute('color', '#aaa');
-              addrLabel.setAttribute('width', 0.8);
-              addrLabel.setAttribute('align', 'center');
-              cell.appendChild(addrLabel);
-
-              // Value Label
-              const valLabel = document.createElement('a-text');
-              const randomVal = Math.floor(Math.random() * 999).toString().padStart(3, '0');
-              valLabel.setAttribute('value', randomVal);
-              valLabel.setAttribute('position', '0 0.11 0');
-              valLabel.setAttribute('rotation', '-90 0 0');
-              valLabel.setAttribute('color', '#00FF88');
-              valLabel.setAttribute('width', 1.5);
-              valLabel.setAttribute('align', 'center');
-              valLabel.setAttribute('id', `ram-val-${addr}`);
-              cell.appendChild(valLabel);
-
-              this.el.appendChild(cell);
-            }
-          }
-        }
-      });
-
-      // ─── CPU Display Component ───────────────────────────────────────────
-      AFRAME.registerComponent('cpu-display', {
-        init() {
-          // Motherboard Base
-          const base = document.createElement('a-box');
-          base.setAttribute('width', 2.2);
-          base.setAttribute('height', 0.05);
-          base.setAttribute('depth', 1.8);
-          base.setAttribute('position', '0 -0.025 0');
-          base.setAttribute('material', 'color: #0a3a2a; metalness: 0.6; roughness: 0.4');
-          this.el.appendChild(base);
-
-          // Add some 3D "Buses" (connection lines)
-          this.createBus('-0.4 0.01 0', '0.8 0.02 0.02', '0 0 0'); // Left to Right
-          this.createBus('0 0.01 -0.2', '0.02 0.02 0.8', '0 0 0'); // Top to Bottom (Register column)
-
-          // Layout: CU on left, Registers in center, ALU on right
-          const cu = this.createCU();
-          cu.setAttribute('position', '-0.7 0.05 -0.1');
-          this.el.appendChild(cu);
-
-          const regs = this.createRegisters();
-          regs.setAttribute('position', '0 0.05 0');
-          this.el.appendChild(regs);
-
-          const alu = this.createALU();
-          alu.setAttribute('position', '0.7 0.05 0.2');
-          this.el.appendChild(alu);
-        },
-
-        createBus(pos, scale, rot) {
-          const bus = document.createElement('a-cylinder');
-          bus.setAttribute('position', pos);
-          bus.setAttribute('height', 1);
-          bus.setAttribute('radius', 0.01);
-          bus.setAttribute('rotation', '90 90 0');
-          if (scale.startsWith('0.02')) bus.setAttribute('rotation', '90 0 0'); // Vertical
-          
-          bus.setAttribute('scale', scale);
-          bus.setAttribute('material', 'color: #00ffff; opacity: 0.3; transparent: true; emissive: #00ffff; emissiveIntensity: 0.5');
-          this.el.appendChild(bus);
-        },
-
-        createCU() {
-          const cu = document.createElement('a-entity');
-          
-          // Background Panel (Thick 3D Box)
-          const panel = document.createElement('a-box');
-          panel.setAttribute('width', 0.8);
-          panel.setAttribute('height', 0.1);
-          panel.setAttribute('depth', 1.2);
-          panel.setAttribute('material', 'color: #222; metalness: 0.5');
-          cu.appendChild(panel);
-
-          const title = document.createElement('a-text');
-          title.setAttribute('value', 'CONTROL UNIT');
-          title.setAttribute('position', '0 0.06 -0.5');
-          title.setAttribute('rotation', '-90 0 0');
-          title.setAttribute('align', 'center');
-          title.setAttribute('width', 1.5);
-          cu.appendChild(title);
-
-          // Opcode/Operand displays...
-          this.createDisplay(cu, 'Opcode', '0', -0.2, -0.3);
-          this.createDisplay(cu, 'Operand', '00', 0.2, -0.3);
-
-          // Instruction Set Reference
-          const instrSet = document.createElement('a-entity');
-          instrSet.setAttribute('position', '0 0.03 0.2');
-          const instrs = [
-            'ADD 1xx', 'SUB 2xx', 'STA 3xx', 'LDA 5xx',
-            'BRA 6xx', 'BRZ 7xx', 'BRP 8xx', 'INP 901',
-            'OUT 902', 'HLT 0xx'
-          ];
-          instrs.forEach((t, i) => {
-            const row = Math.floor(i / 2);
-            const col = i % 2;
-            const text = document.createElement('a-text');
-            text.setAttribute('value', t);
-            text.setAttribute('position', `${-0.25 + col * 0.5} 0.06 ${row * 0.15}`);
-            text.setAttribute('rotation', '-90 0 0');
-            text.setAttribute('width', 1);
-            text.setAttribute('align', 'center');
-            text.setAttribute('color', t.startsWith('HLT') ? '#ff6b6b' : '#eee');
-            instrSet.appendChild(text);
-          });
-          cu.appendChild(instrSet);
-
-          return cu;
-        },
-
-        createDisplay(parent, labelText, defaultVal, x, z) {
-          const container = document.createElement('a-entity');
-          container.setAttribute('position', `${x} 0.06 ${z}`);
-
-          const label = document.createElement('a-text');
-          label.setAttribute('value', labelText);
-          label.setAttribute('position', '0 0.01 -0.1');
-          label.setAttribute('rotation', '-90 0 0');
-          label.setAttribute('align', 'center');
-          label.setAttribute('width', 1);
-          label.setAttribute('color', '#ffb3ba');
-          container.appendChild(label);
-
-          const val = document.createElement('a-text');
-          val.setAttribute('value', defaultVal);
-          val.setAttribute('rotation', '-90 0 0');
-          val.setAttribute('align', 'center');
-          val.setAttribute('width', 2);
-          val.setAttribute('color', '#fff');
-          val.setAttribute('id', `cpu-${labelText.toLowerCase()}`);
-          container.appendChild(val);
-
-          parent.appendChild(container);
-        },
-
-        createRegisters() {
-          const regs = document.createElement('a-entity');
-          const registerList = ['PC', 'MAR', 'CIR', 'MDR', 'ACC'];
-          const spacing = 0.2;
-
-          registerList.forEach((name, i) => {
-            const reg = document.createElement('a-entity');
-            reg.setAttribute('position', `0 0.01 ${-0.4 + i * spacing}`);
-
-            // 3D block for register
-            const regBox = document.createElement('a-box');
-            regBox.setAttribute('width', 0.6);
-            regBox.setAttribute('height', 0.1);
-            regBox.setAttribute('depth', 0.15);
-            regBox.setAttribute('material', 'color: #333; metalness: 0.2');
-            reg.appendChild(regBox);
-
-            const label = document.createElement('a-text');
-            label.setAttribute('value', name);
-            label.setAttribute('position', '-0.2 0.06 0');
-            label.setAttribute('rotation', '-90 0 0');
-            label.setAttribute('width', 1.5);
-            label.setAttribute('color', '#bae1ff');
-            reg.appendChild(label);
-
-            const val = document.createElement('a-text');
-            val.setAttribute('value', name === 'PC' ? '00' : '000');
-            val.setAttribute('position', '0.1 0.06 0');
-            val.setAttribute('rotation', '-90 0 0');
-            val.setAttribute('width', 2);
-            val.setAttribute('id', `reg-${name.toLowerCase()}`);
-            reg.appendChild(val);
-
-            regs.appendChild(reg);
-          });
-
-          return regs;
-        },
-
-        createALU() {
-          const alu = document.createElement('a-entity');
-          alu.setAttribute('alu', ''); // Flag for logic
-          
-          const box = document.createElement('a-box');
-          box.setAttribute('width', 0.6);
-          box.setAttribute('height', 0.3);
-          box.setAttribute('depth', 0.8);
-          box.setAttribute('material', 'color: #444; metalness: 0.9; roughness: 0.1; emissive: #ff00ff; emissiveIntensity: 0.1');
-          alu.appendChild(box);
-
-          const text = document.createElement('a-text');
-          text.setAttribute('value', 'ALU');
-          text.setAttribute('position', '0 0.16 0');
-          text.setAttribute('rotation', '-90 0 0');
-          text.setAttribute('align', 'center');
-          text.setAttribute('width', 3);
-          text.setAttribute('color', '#ffffba');
-          alu.appendChild(text);
-
-          return alu;
-        }
-      });
-
-      // ─── FDE Controller Component ───────────────────────────────────────
-      AFRAME.registerComponent('fde-controller', {
-        init() {
-          this.state = 'IDLE'; // IDLE, FETCHING, DECODING, EXECUTING
-          this.currentInstruction = null;
-          this.pc = 0;
-          this.visibleMarkers = new Set();
-
-          // Create "Raw Data" Packet entity
-          this.packet = document.createElement('a-entity');
-          this.packet.setAttribute('visible', false);
-          
-          const pBox = document.createElement('a-box');
-          pBox.setAttribute('width', 0.12);
-          pBox.setAttribute('height', 0.12);
-          pBox.setAttribute('depth', 0.12);
-          pBox.setAttribute('material', 'color: #FFC65D; emissive: #FFC65D; emissiveIntensity: 1; opacity: 0.8; transparent: true');
-          this.packet.appendChild(pBox);
-
-          this.packetText = document.createElement('a-text');
-          this.packetText.setAttribute('value', '000');
-          this.packetText.setAttribute('align', 'center');
-          this.packetText.setAttribute('position', '0 0.1 0');
-          this.packetText.setAttribute('scale', '0.5 0.5 0.5');
-          this.packetText.setAttribute('color', '#000');
-          this.packet.appendChild(this.packetText);
-
-          this.el.sceneEl.appendChild(this.packet);
-
-          // Track marker visibility
-          const markers = ['marker-execute', 'marker-ram', 'marker-cpu'];
-          markers.forEach(id => {
-            const m = document.getElementById(id);
-            if (m) {
-              m.addEventListener('markerFound', () => { this.visibleMarkers.add(id); this.updateButtons(); });
-              m.addEventListener('markerLost', () => { this.visibleMarkers.delete(id); this.updateButtons(); });
-            }
-          });
-
-          // State change event listeners
-          this.el.sceneEl.addEventListener('fetch-instruction', (e) => this.fetch(e.detail.instruction));
-          
-          document.getElementById('decode-btn').onclick = () => this.decode();
-          document.getElementById('execute-btn').onclick = () => this.execute();
-
-          // Initialize visibility
-          this.updateButtons();
-        },
-
-        updateButtons() {
-            const mExecute = this.visibleMarkers.has('marker-execute');
-            const mCPU = this.visibleMarkers.has('marker-cpu');
-
-            document.getElementById('fetch-btn').style.display = (this.state === 'IDLE' && mExecute) ? 'block' : 'none';
-            document.getElementById('decode-btn').style.display = (this.state === 'DECODED_READY' && mCPU) ? 'block' : 'none';
-            document.getElementById('execute-btn').style.display = (this.state === 'EXECUTED_READY' && mCPU) ? 'block' : 'none';
-        },
-
-        fetch(instruction) {
-          if (this.state !== 'IDLE') return;
-          this.state = 'FETCHING';
-          this.updateButtons();
-          this.currentInstruction = instruction;
-          
-          showDataCollected(`FETCH: ${instruction}`);
-          
-          // Animate packet from Marker 0 to CPU
-          const m0 = document.getElementById('marker-execute');
-          const m2 = document.getElementById('marker-cpu');
-          this.animatePacket(m0, m2, instruction, () => {
-             document.getElementById('reg-cir').setAttribute('value', instruction);
-             this.state = 'DECODED_READY';
-             this.updateButtons();
-             showDataCollected("FETCH COMPLETE. Press DECODE.");
-          });
-        },
-
-        decode() {
-          if (this.state !== 'DECODED_READY') return;
-          this.state = 'DECODING';
-          this.updateButtons();
-          const instr = this.currentInstruction; // e.g., "ADD 05"
-          
-          let opcode = '0';
-          let operand = '00';
-          
-          if (instr.startsWith('ADD')) { opcode = '1'; operand = instr.split(' ')[1]; }
-          else if (instr.startsWith('SUB')) { opcode = '2'; operand = instr.split(' ')[1]; }
-          else if (instr.startsWith('STA')) { opcode = '3'; operand = instr.split(' ')[1]; }
-
-          document.getElementById('cpu-opcode').setAttribute('value', opcode);
-          document.getElementById('cpu-operand').setAttribute('value', operand);
-          
-          showDataCollected(`DECODE: Op:${opcode} Arg:${operand}`);
-          this.state = 'EXECUTED_READY';
-          this.updateButtons();
-          showDataCollected("DECODE COMPLETE. Press EXECUTE.");
-        },
-
-        execute() {
-          if (this.state !== 'EXECUTED_READY') return;
-          this.state = 'EXECUTING';
-          this.updateButtons();
-          const opcode = document.getElementById('cpu-opcode').getAttribute('value');
-          const operand = document.getElementById('cpu-operand').getAttribute('value');
-          const accVal = document.getElementById('reg-acc').getAttribute('value');
-          
-          showDataCollected(`EXECUTE: ${opcode}${operand}`);
-          
-          const cpu = document.getElementById('marker-cpu');
-          const ramMarker = document.getElementById('marker-ram');
-
-          if (opcode === '3') { // STA (Store Accumulator to RAM)
-             const targetAddr = parseInt(operand);
-             const targetCell = document.getElementById(`ram-cell-${targetAddr}`);
-             if (targetCell) {
-               showDataCollected(`STORING ${accVal} TO RAM ADDR ${targetAddr}`);
-               this.animatePacket(cpu, ramMarker, accVal, () => {
-                 const valEl = document.getElementById(`ram-val-${targetAddr}`);
-                 if (valEl) valEl.setAttribute('value', accVal);
-                 this.pulseCell(targetCell);
-                 this.finishExecute();
-               });
-               return; 
-             }
-          } else if (opcode === '1' || opcode === '2') { // ADD / SUB
-             const targetAddr = parseInt(operand);
-             const targetCell = document.getElementById(`ram-cell-${targetAddr}`);
-             
-             if (targetCell) {
-               showDataCollected(`FETCHING VALUE FROM RAM ADDR ${targetAddr} FOR ALU`);
-               
-               // Phase 1: Fetch from RAM to CPU
-               this.animatePacket(ramMarker, cpu, "DATA", () => {
-                 showDataCollected("ALU processing...");
-                 
-                 // Get actual value for the label
-                 const ramValEl = document.getElementById(`ram-val-${targetAddr}`);
-                 const ramVal = ramValEl ? ramValEl.getAttribute('value') : "000";
-
-                 // Phase 2: Move both RAM value and ACC value into ALU
-                 // We'll simulate this with sequential animations for simplicity
-                 this.animatePacket(cpu, cpu, ramVal, () => { // Marker 2 to Marker 2 (Intra-CPU)
-                    this.pulseALU();
-                    
-                    let currentAccValue = parseInt(accVal) || 0;
-                    let incomingVal = parseInt(ramVal) || 0;
-                    let result = (opcode === '1') ? currentAccValue + incomingVal : currentAccValue - incomingVal;
-                    result = Math.max(0, Math.min(999, result));
-                    const resultStr = result.toString().padStart(3, '0');
-
-                    // Phase 3: Move result back to ACC
-                    setTimeout(() => {
-                        this.animatePacket(cpu, cpu, resultStr, () => {
-                            document.getElementById('reg-acc').setAttribute('value', resultStr);
-                            this.finishExecute();
-                        });
-                    }, 500);
-                 }, true); // Use 'true' flag for internal CPU move offset logic if needed
-               });
-               return;
-             }
-          }
-
-          this.finishExecute();
-        },
-
-        pulseALU() {
-          const alu = document.querySelector('[alu]');
-          if (alu) {
-            alu.setAttribute('animation__pulse', {
-               property: 'material.emissiveIntensity',
-               from: 0.1,
-               to: 2,
-               dur: 300,
-               dir: 'alternate',
-               loop: 4
-            });
-          }
-        },
-
-        finishExecute() {
-          this.pc = (this.pc + 1) % 25;
-          document.getElementById('reg-pc').setAttribute('value', this.pc.toString().padStart(2, '0'));
-          this.state = 'IDLE';
-          this.updateButtons();
-          showDataCollected("CYCLE COMPLETE. PC incremented.");
-        },
-
-        pulseCell(el) {
-          el.setAttribute('animation__pulse', {
-            property: 'scale',
-            from: '1 1 1',
-            to: '1.2 1.2 1.2',
-            dur: 200,
-            dir: 'alternate',
-            loop: 2
-          });
-        },
-
-        animatePacket(fromEl, toEl, value, callback, isIntraCPU = false) {
-          this.packet.setAttribute('visible', true);
-          this.packetText.setAttribute('value', value);
-          
-          const startPos = new THREE.Vector3();
-          const endPos = new THREE.Vector3();
-          
-          const duration = isIntraCPU ? 800 : 1500;
-          const startTime = Date.now();
-          
-          const update = () => {
-            const elapsed = Date.now() - startTime;
-            const t = Math.min(elapsed / duration, 1);
-            
-            fromEl.object3D.getWorldPosition(startPos);
-            toEl.object3D.getWorldPosition(endPos);
-            
-            // If intra-CPU, offset the points slightly so they aren't at the marker center
-            if (isIntraCPU) {
-               startPos.y += 0.2;
-               endPos.y += 0.2;
-               endPos.x += 0.5; // Move towards ALU
-            } else {
-               startPos.y += 0.1;
-               endPos.y += 0.1;
-            }
-            
-            const currentPos = new THREE.Vector3().lerpVectors(startPos, endPos, t);
-            this.packet.object3D.position.copy(currentPos);
-            
-            // Look at the camera so text is readable
-            this.packet.object3D.lookAt(this.el.sceneEl.camera.el.object3D.position);
-            
-            if (t < 1) {
-              requestAnimationFrame(update);
-            } else {
-              this.packet.setAttribute('visible', false);
-              if (callback) callback();
-            }
-          };
-          
-          update();
-        }
-      });
-    </script>
-
-    <style>
-      #ui-overlay {
-        position: fixed; top: 10px; left: 10px; z-index: 999;
-        background: rgba(0,0,0,0.7); color: white; padding: 15px; border-radius: 8px;
-        font-family: sans-serif; display: flex; flex-direction: column; gap: 10px; max-width: 220px;
-      }
-      button { cursor: pointer; padding: 8px 12px; background: #4CC3D9; border: none; border-radius: 4px; font-weight: bold; }
-      .status { font-size: 0.8em; color: #aaa; }
-      #fetch-btn {
-        display: none; padding: 15px 30px; background: #FFC65D; color: #1a1a2e;
-        font-size: 1.5em; border-radius: 8px; box-shadow: 0 4px 10px rgba(0,0,0,0.5);
-        margin-top: 20px; text-align: center; width: 100%; border: 2px solid white;
-        transition: transform 0.1s;
-      }
-      #fetch-btn:active, #decode-btn:active, #execute-btn:active { transform: scale(0.95); }
-      #decode-btn, #execute-btn {
-        display: none; padding: 15px 30px; background: #C77DFF; color: white;
-        font-size: 1.5em; border-radius: 8px; box-shadow: 0 4px 10px rgba(0,0,0,0.5);
-        margin-top: 10px; text-align: center; width: 100%; border: 2px solid white;
-      }
-      #execute-btn { background: #FF6B6B; }
-      #task-panel {
-        position: fixed; bottom: 20px; right: 20px; z-index: 1000;
-        background: rgba(26, 26, 46, 0.85); color: #00FF88; padding: 15px;
-        border-radius: 8px; font-family: monospace; font-size: 1.1em;
-        width: 250px; height: 150px; overflow-y: auto; pointer-events: auto;
-        box-shadow: 0 4px 15px rgba(0,0,0,0.5); border: 1px solid #00FF88;
-      }
-      .task-item {
-        margin-bottom: 5px; border-bottom: 1px dashed rgba(0, 255, 136, 0.3); padding-bottom: 5px;
-      }
-    </style>
-  </head>
-
-  <body style="margin: 0; overflow: hidden;">
-    <div id="ui-overlay">
-      <div id="room-info">Initializing Room...</div>
-      <button id="copy-btn" style="display:none;">Copy Invite Link</button>
-      <div id="peer-status" class="status">Waiting for connection...</div>
-      <button id="fetch-btn">FETCH</button>
-      <button id="decode-btn">DECODE</button>
-      <button id="execute-btn">EXECUTE</button>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+  <title>FDE Steampunk Workshop — AR</title>
+  <link rel="stylesheet" href="styles.css">
+  <!-- AR / 3D core -->
+  <script src="https://aframe.io/releases/1.3.0/aframe.min.js"></script>
+  <script src="https://raw.githack.com/AR-js-org/AR.js/master/aframe/build/aframe-ar.js"></script>
+  <!-- P2P -->
+  <script src="https://unpkg.com/peerjs@1.4.7/dist/peerjs.min.js"></script>
+  <!-- Game modules (order matters) -->
+  <script src="audio.js"></script>
+  <script src="textures.js"></script>
+  <script src="gamestate.js"></script>
+  <script src="gameplay.js"></script>
+</head>
+<body>
+
+<!-- ── OVERLAYS ─────────────────────────────────────────────────── -->
+<div id="heat-vignette"></div>
+
+<div id="shake-indicator">
+  <p>🔧 &nbsp;SHAKE THE PHONE!&nbsp; 🔧</p>
+  <div id="shake-bar-bg"><div id="shake-progress"></div></div>
+</div>
+
+<!-- ── HUD ──────────────────────────────────────────────────────── -->
+<div id="hud">
+  <div id="hud-top">
+    <span>⚙</span>
+    <span id="hud-clock">0 Hz</span>
+    <div id="heat-wrap">
+      <span>🔥</span>
+      <div id="heat-wrap-bg"><div id="hud-heat-bar"></div></div>
     </div>
-    
-    <div id="task-panel">
-      <div style="font-weight: bold; margin-bottom: 10px; border-bottom: 1px solid white; padding-bottom: 5px; color: white;">DATA COLLECTED</div>
-      <div id="task-list"></div>
-    </div>
+    <span id="hud-queue">▶ Render Frame 1</span>
+  </div>
+  <div id="crosshair">⊕</div>
+  <div id="hud-bottom">
+    <div class="inv-slot" id="slot-0" onclick="dropItem(0)" title="Slot 0"></div>
+    <div class="inv-slot" id="slot-1" onclick="dropItem(1)" title="Slot 1" style="display:none"></div>
+    <div class="inv-slot" id="slot-2" onclick="dropItem(2)" title="Slot 2" style="display:none"></div>
+  </div>
+</div>
 
-    <a-scene
-      embedded
-      arjs="sourceType: webcam; debugUIEnabled: false; detectionMode: mono_and_matrix; matrixCodeType: 3x3;"
-      cursor="rayOrigin: mouse"
-      raycaster="objects: .interactable">
+<!-- ── ACTION BUTTONS ───────────────────────────────────────────── -->
+<div id="action-panel">
+  <button class="action-btn" id="btn-fetch"     onclick="doFetch()">⬆ FETCH</button>
+  <button class="action-btn" id="btn-decode"    onclick="doDecode()">🔧 DECODE</button>
+  <button class="action-btn" id="btn-load"      onclick="doLoad()">📁 LOAD DATA</button>
+  <button class="action-btn" id="btn-execute"   onclick="doExecute()">⚡ EXECUTE</button>
+  <button class="action-btn" id="btn-writeback" onclick="doWriteback()">💾 WRITE BACK</button>
+  <button class="action-btn" id="btn-ram"       onclick="doRAMFetch()">🗄 RAM FETCH</button>
+  <!-- Desktop shake fallback -->
+  <button class="action-btn" id="btn-shake" onclick="simulateShake()"
+    style="display:block;background:#111;color:#888;border-color:#444;font-size:13px;padding:8px 18px;">
+    [TAP TO SHAKE — no accel]
+  </button>
+</div>
 
-      <!-- Marker 0: EXECUTE (Conveyor) -->
-      <a-marker type="barcode" value="0" id="marker-execute">
-        <a-entity id="obj-execute" class="interactable" position="0 0 0" conveyor-instructions>
-          <a-box id="belt-surface" width="1.6" height="0.04" depth="0.5" position="0 0.22 0" material="color: #222; repeat: 4 1;"
-            animation__scroll="property: material.repeat; from: 0 0; to: 4 0; loop: true; dur: 1800; easing: linear">
-          </a-box>
-          <a-box width="1.7" height="0.06" depth="0.06" position="0 0.16 0.23" material="color: #888; metalness:0.6; roughness:0.3"></a-box>
-          <a-box width="1.7" height="0.06" depth="0.06" position="0 0.16 -0.23" material="color: #888; metalness:0.6; roughness:0.3"></a-box>
-          <a-box width="0.05" height="0.3" depth="0.05" position="-0.75 0.0 0.22" material="color: #666"></a-box>
-          <a-box width="0.05" height="0.3" depth="0.05" position="0.75 0.0 0.22" material="color: #666"></a-box>
-          <a-box width="0.05" height="0.3" depth="0.05" position="-0.75 0.0 -0.22" material="color: #666"></a-box>
-          <a-box width="0.05" height="0.3" depth="0.05" position="0.75 0.0 -0.22" material="color: #666"></a-box>
-          <a-entity id="asm-chip" visible="false" position="-0.80 0.29 0">
-            <a-box width="0.28" height="0.08" depth="0.18" material="color: #1a1a2e; metalness:0.3; roughness:0.7"></a-box>
-            <a-text id="chip-top" value="" position="0 0.05 0" rotation="-90 0 0" align="center" color="#00FF88" width="1.4" wrap-count="12"></a-text>
-            <a-text id="chip-front" value="" position="0 0 0.09" rotation="0 0 0" align="center" color="#00FF88" width="1.2" wrap-count="12"></a-text>
-          </a-entity>
-        </a-entity>
-        
-      </a-marker>
+<!-- ── TOP-LEFT PANEL ───────────────────────────────────────────── -->
+<div id="ui-top-left">
+  <div id="room-info">Connecting…</div>
+  <button id="copy-btn" style="display:none" onclick="copyLink()">Copy Invite Link</button>
+</div>
+<div id="log-panel"></div>
 
-      <!-- Marker 1: RAM Grid -->
-      <a-marker type="barcode" value="1" id="marker-ram">
-        <a-entity ram-grid position="0 0 0"></a-entity>
-      </a-marker>
+<!-- ════════════════════════════════════════════════════════════════
+     AR SCENE
+     Marker 0 → Conveyor Belt (Fetch)
+     Marker 1 → Dispatch Desk  (Decode)
+     Marker 2 → Register File  (Load / Write-Back)
+     Marker 3 → ALU Forge      (Execute)
+     Marker 4 → RAM Cabinet    (Cache-Miss Fetch)
+     ════════════════════════════════════════════════════════════════ -->
+<a-scene
+  embedded
+  arjs="sourceType: webcam; debugUIEnabled: false; detectionMode: mono_and_matrix; matrixCodeType: 3x3;"
+  vr-mode-ui="enabled: false"
+  renderer="logarithmicDepthBuffer: true; antialias: true;">
 
-      <!-- Marker 2: CPU Display -->
-      <a-marker type="barcode" value="2" id="marker-cpu">
-        <a-entity cpu-display position="0 0 0"></a-entity>
-      </a-marker>
+  <!-- ── MARKER 0 · CONVEYOR BELT (FETCH) ── -->
+  <a-marker type="barcode" value="0" id="mk-conveyor" smooth="true" smoothCount="5">
+    <!-- Frame -->
+    <a-box width="1.85" height="0.05" depth="0.55" position="0 0.22 0"
+      material="color:#2e1c0a;metalness:0.85;roughness:0.25"></a-box>
+    <!-- Rails -->
+    <a-box width="1.9" height="0.07" depth="0.055" position="0 0.17 0.25" material="color:#7c5a1e;metalness:0.9"></a-box>
+    <a-box width="1.9" height="0.07" depth="0.055" position="0 0.17 -0.25" material="color:#7c5a1e;metalness:0.9"></a-box>
+    <!-- Legs -->
+    <a-box width="0.05" height="0.28" depth="0.05" position="-0.88 0.06 0.24" material="color:#5a3a10;metalness:0.7"></a-box>
+    <a-box width="0.05" height="0.28" depth="0.05" position="0.88 0.06 0.24"  material="color:#5a3a10;metalness:0.7"></a-box>
+    <a-box width="0.05" height="0.28" depth="0.05" position="-0.88 0.06 -0.24" material="color:#5a3a10;metalness:0.7"></a-box>
+    <a-box width="0.05" height="0.28" depth="0.05" position="0.88 0.06 -0.24"  material="color:#5a3a10;metalness:0.7"></a-box>
+    <!-- Steam pipe -->
+    <a-cylinder radius="0.035" height="1.85" position="0 0.44 -0.25" rotation="0 0 90"
+      material="color:#999;metalness:1;roughness:0.15"></a-cylinder>
+    <!-- Rollers -->
+    <a-cylinder radius="0.035" height="0.5" position="-0.88 0.22 0" rotation="0 90 0"
+      material="color:#888;metalness:0.9"></a-cylinder>
+    <a-cylinder radius="0.035" height="0.5" position="0.88 0.22 0" rotation="0 90 0"
+      material="color:#888;metalness:0.9"></a-cylinder>
+    <!-- Label -->
+    <a-text value="INSTRUCTION QUEUE" position="0 0.42 0.2" rotation="-90 0 0"
+      align="center" color="#e8c97a" width="1.1"></a-text>
+    <!-- Belt chip (Data Block) -->
+    <a-entity id="belt-chip" visible="false" position="-0.7 0.3 0">
+      <a-box width="0.34" height="0.1" depth="0.24"
+        material="color:#3e2208;metalness:0.75;roughness:0.35"></a-box>
+      <a-box width="0.26" height="0.015" depth="0.17" position="0 0.057 0"
+        material="color:#120a02;metalness:0.3"></a-box>
+      <a-image id="chip-img" width="0.24" height="0.15" position="0 0.063 0" rotation="-90 0 0"></a-image>
+    </a-entity>
+  </a-marker>
 
-      <a-entity fde-controller></a-entity>
+  <!-- ── MARKER 1 · DISPATCH DESK (DECODE) ── -->
+  <a-marker type="barcode" value="1" id="mk-dispatch" smooth="true" smoothCount="5">
+    <!-- Desk top -->
+    <a-box width="1.5" height="0.1" depth="1.0" position="0 0.17 0"
+      material="color:#2e1808;metalness:0.65;roughness:0.45"></a-box>
+    <!-- Legs -->
+    <a-box width="0.09" height="0.34" depth="0.09" position="-0.68 0 -0.42" material="color:#1e0f04;metalness:0.8"></a-box>
+    <a-box width="0.09" height="0.34" depth="0.09" position="0.68 0 -0.42"  material="color:#1e0f04;metalness:0.8"></a-box>
+    <a-box width="0.09" height="0.34" depth="0.09" position="-0.68 0 0.42"  material="color:#1e0f04;metalness:0.8"></a-box>
+    <a-box width="0.09" height="0.34" depth="0.09" position="0.68 0 0.42"   material="color:#1e0f04;metalness:0.8"></a-box>
+    <!-- Pneumatic tubes (3) -->
+    <a-cylinder radius="0.05" height="0.55" position="-0.42 0.5 -0.22" material="color:#aaa;metalness:1"></a-cylinder>
+    <a-cylinder radius="0.05" height="0.55" position="0 0.5 -0.22"    material="color:#aaa;metalness:1"></a-cylinder>
+    <a-cylinder radius="0.05" height="0.55" position="0.42 0.5 -0.22"  material="color:#aaa;metalness:1"></a-cylinder>
+    <!-- Input tray (recessed slot) -->
+    <a-box width="0.38" height="0.02" depth="0.38" position="0 0.23 0.14"
+      material="color:#1a0f04;emissive:#ff8c00;emissiveIntensity:0.25"></a-box>
+    <!-- Label -->
+    <a-text value="DISPATCH DESK" position="0 0.3 0.52" rotation="-90 0 0"
+      align="center" color="#e8c97a" width="1.4"></a-text>
+    <a-text value="DROP + SHAKE" position="0 0.22 0.52" rotation="-90 0 0"
+      align="center" color="#aa7733" width="1.0"></a-text>
+    <!-- Data block placed on desk -->
+    <a-entity id="dispatch-block" visible="false" position="0 0.3 0.14">
+      <a-box width="0.34" height="0.1" depth="0.24"
+        material="color:#3e2208;metalness:0.75;roughness:0.35"></a-box>
+      <a-image id="dispatch-img" width="0.24" height="0.15" position="0 0.06 0" rotation="-90 0 0"></a-image>
+    </a-entity>
+  </a-marker>
 
-      <a-entity camera></a-entity>
-    </a-scene>
+  <!-- ── MARKER 2 · REGISTER FILE (LOAD / WRITE-BACK) ── -->
+  <a-marker type="barcode" value="2" id="mk-registers" smooth="true" smoothCount="5">
+    <!-- Back panel -->
+    <a-box width="1.65" height="0.52" depth="0.07" position="0 0.36 -0.42"
+      material="color:#2e1808;metalness:0.65;roughness:0.45"></a-box>
+    <!-- Base -->
+    <a-box width="1.65" height="0.06" depth="0.56" position="0 0.04 0"
+      material="color:#1e0f04;metalness:0.8"></a-box>
+    <!-- Label -->
+    <a-text value="REGISTER FILE" position="0 0.65 -0.42" rotation="-90 0 0"
+      align="center" color="#ffd700" width="1.5"></a-text>
+    <!-- Cubby R0 -->
+    <a-entity id="cubby-R0" position="-0.64 0.27 0">
+      <a-box width="0.26" height="0.24" depth="0.46" material="color:#3e2010;metalness:0.7"></a-box>
+      <a-text value="R0" position="0 0.15 -0.15" rotation="-90 0 180" align="center" color="#e8c97a" width="1.2"></a-text>
+      <a-text id="val-R0" value="042" position="0 0.12 0.05" rotation="-90 0 0" align="center" color="#44ff88" width="1.5"></a-text>
+    </a-entity>
+    <!-- Cubby R1 -->
+    <a-entity id="cubby-R1" position="-0.32 0.27 0">
+      <a-box width="0.26" height="0.24" depth="0.46" material="color:#3e2010;metalness:0.7"></a-box>
+      <a-text value="R1" position="0 0.15 -0.15" rotation="-90 0 180" align="center" color="#e8c97a" width="1.2"></a-text>
+      <a-text id="val-R1" value="017" position="0 0.12 0.05" rotation="-90 0 0" align="center" color="#44ff88" width="1.5"></a-text>
+    </a-entity>
+    <!-- Cubby R2 -->
+    <a-entity id="cubby-R2" position="0 0.27 0">
+      <a-box width="0.26" height="0.24" depth="0.46" material="color:#3e2010;metalness:0.7"></a-box>
+      <a-text value="R2" position="0 0.15 -0.15" rotation="-90 0 180" align="center" color="#e8c97a" width="1.2"></a-text>
+      <a-text id="val-R2" value="099" position="0 0.12 0.05" rotation="-90 0 0" align="center" color="#44ff88" width="1.5"></a-text>
+    </a-entity>
+    <!-- Cubby R3 -->
+    <a-entity id="cubby-R3" position="0.32 0.27 0">
+      <a-box width="0.26" height="0.24" depth="0.46" material="color:#3e2010;metalness:0.7"></a-box>
+      <a-text value="R3" position="0 0.15 -0.15" rotation="-90 0 180" align="center" color="#e8c97a" width="1.2"></a-text>
+      <a-text id="val-R3" value="000" position="0 0.12 0.05" rotation="-90 0 0" align="center" color="#44ff88" width="1.5"></a-text>
+    </a-entity>
+    <!-- Cubby R4 -->
+    <a-entity id="cubby-R4" position="0.64 0.27 0">
+      <a-box width="0.26" height="0.24" depth="0.46" material="color:#3e2010;metalness:0.7"></a-box>
+      <a-text value="R4" position="0 0.15 -0.15" rotation="-90 0 180" align="center" color="#e8c97a" width="1.2"></a-text>
+      <a-text id="val-R4" value="000" position="0 0.12 0.05" rotation="-90 0 0" align="center" color="#44ff88" width="1.5"></a-text>
+    </a-entity>
+  </a-marker>
 
-    <script>
-      const urlParams = new URLSearchParams(window.location.search);
-      const roomParam = urlParams.get('room');
-      const peer      = new Peer();
-      let conn = null, isHost = !roomParam;
+  <!-- ── MARKER 3 · ALU FORGE (EXECUTE) ── -->
+  <a-marker type="barcode" value="3" id="mk-alu" smooth="true" smoothCount="5">
+    <!-- Forge outer shell -->
+    <a-box width="1.1" height="0.55" depth="0.9" position="0 0.32 0"
+      material="color:#1e0f04;metalness:0.9;roughness:0.2"></a-box>
+    <!-- Fire chamber -->
+    <a-box id="forge-fire" width="0.65" height="0.24" depth="0.5" position="0 0.3 0"
+      material="color:#ff3300;emissive:#ff2200;emissiveIntensity:0.8"></a-box>
+    <!-- Chimneys -->
+    <a-cylinder radius="0.07" height="0.5" position="-0.35 0.83 -0.25" material="color:#2a2a2a;metalness:0.95"></a-cylinder>
+    <a-cylinder radius="0.07" height="0.5" position="0.35 0.83 -0.25"  material="color:#2a2a2a;metalness:0.95"></a-cylinder>
+    <!-- Smoke caps -->
+    <a-cylinder radius="0.1" height="0.04" position="-0.35 1.08 -0.25" material="color:#1a1a1a;metalness:0.9"></a-cylinder>
+    <a-cylinder radius="0.1" height="0.04" position="0.35 1.08 -0.25"  material="color:#1a1a1a;metalness:0.9"></a-cylinder>
+    <!-- Input slots (ticket + data) -->
+    <a-box width="0.32" height="0.03" depth="0.25" position="-0.28 0.6 0.12"
+      material="color:#1a0f04;emissive:#ff8c00;emissiveIntensity:0.35"></a-box>
+    <a-box width="0.32" height="0.03" depth="0.25" position="0.28 0.6 0.12"
+      material="color:#1a0f04;emissive:#4488ff;emissiveIntensity:0.35"></a-box>
+    <a-text value="TICKET" position="-0.28 0.64 0.28" rotation="-90 0 0" align="center" color="#ff8844" width="0.8"></a-text>
+    <a-text value="DATA" position="0.28 0.64 0.28" rotation="-90 0 0" align="center" color="#4488ff" width="0.8"></a-text>
+    <!-- Output anvil -->
+    <a-box width="0.55" height="0.06" depth="0.44" position="0 0.6 -0.22"
+      material="color:#555;metalness:1;roughness:0.05"></a-box>
+    <!-- Label -->
+    <a-text value="ALU FORGE" position="0 0.72 0.48" rotation="-90 0 0" align="center" color="#ffd700" width="2.0"></a-text>
+    <!-- Result block (appears on anvil) -->
+    <a-entity id="forge-result" visible="false" position="0 0.66 -0.16">
+      <a-box width="0.34" height="0.1" depth="0.24"
+        material="color:#3e2208;metalness:0.75;roughness:0.35"></a-box>
+      <a-image id="result-img" width="0.24" height="0.15" position="0 0.057 0" rotation="-90 0 0"></a-image>
+    </a-entity>
+  </a-marker>
 
-      window.addEventListener('load', () => {
-        document.querySelectorAll('a-marker').forEach(marker => {
-          marker.addEventListener('markerFound', () => {
-            console.log(`[AR DEBUG] Marker Found: ${marker.getAttribute('value')} (${marker.id})`);
-          });
-        });
-      });
+  <!-- ── MARKER 4 · RAM CABINET (LONG-HAUL FETCH) ── -->
+  <a-marker type="barcode" value="4" id="mk-ram" smooth="true" smoothCount="5">
+    <!-- Cabinet body -->
+    <a-box width="1.25" height="1.3" depth="0.65" position="0 0.7 0"
+      material="color:#2e1c0a;metalness:0.45;roughness:0.85"></a-box>
+    <!-- Rust patches -->
+    <a-box width="0.32" height="0.22" depth="0.01" position="-0.3 0.5 0.33"
+      material="color:#5a2c0a;roughness:1;metalness:0"></a-box>
+    <a-box width="0.22" height="0.3" depth="0.01" position="0.42 0.95 0.33"
+      material="color:#4a1a00;roughness:1;metalness:0"></a-box>
+    <!-- 4 Drawer fronts -->
+    <a-box width="0.85" height="0.22" depth="0.03" position="0 1.0 0.34"
+      material="color:#3e2010;metalness:0.7;roughness:0.5"></a-box>
+    <a-box width="0.85" height="0.22" depth="0.03" position="0 0.78 0.34"
+      material="color:#3e2010;metalness:0.7;roughness:0.5"></a-box>
+    <a-box width="0.85" height="0.22" depth="0.03" position="0 0.56 0.34"
+      material="color:#3e2010;metalness:0.7;roughness:0.5"></a-box>
+    <a-box width="0.85" height="0.22" depth="0.03" position="0 0.34 0.34"
+      material="color:#3e2010;metalness:0.7;roughness:0.5"></a-box>
+    <!-- Drawer handles -->
+    <a-box width="0.35" height="0.03" depth="0.035" position="0 1.02 0.365" material="color:#aa8833;metalness:0.9"></a-box>
+    <a-box width="0.35" height="0.03" depth="0.035" position="0 0.80 0.365" material="color:#aa8833;metalness:0.9"></a-box>
+    <a-box width="0.35" height="0.03" depth="0.035" position="0 0.58 0.365" material="color:#aa8833;metalness:0.9"></a-box>
+    <a-box width="0.35" height="0.03" depth="0.035" position="0 0.36 0.365" material="color:#aa8833;metalness:0.9"></a-box>
+    <!-- Labels -->
+    <a-text value="MAIN MEMORY" position="0 1.42 0.34" rotation="-90 0 0" align="center" color="#ff7744" width="1.6"></a-text>
+    <a-text value="RAM" position="0 1.28 0.34" rotation="-90 0 0" align="center" color="#ff4400" width="2.4"></a-text>
+    <a-text value="SLOW ACCESS ×2" position="0 1.17 0.34" rotation="-90 0 0" align="center" color="#aa5533" width="1.2"></a-text>
+    <!-- Result block (appears after RAM fetch) -->
+    <a-entity id="ram-result" visible="false" position="0 1.44 0.1">
+      <a-box width="0.34" height="0.1" depth="0.24"
+        material="color:#3e2208;metalness:0.75;roughness:0.35"></a-box>
+      <a-image id="ram-img" width="0.24" height="0.15" position="0 0.057 0" rotation="-90 0 0"></a-image>
+    </a-entity>
+  </a-marker>
 
-      peer.on('open', (id) => {
-        if (isHost) {
-          const roomUrl = `${window.location.origin}${window.location.pathname}?room=${id}`;
-          document.getElementById('room-info').innerText = `Room ID: ${id.substring(0, 6)}`;
-          document.getElementById('copy-btn').style.display = 'block';
-          document.getElementById('copy-btn').onclick = () => { navigator.clipboard.writeText(roomUrl); alert('Invite link copied!'); };
-        } else {
-          document.getElementById('room-info').innerText = `Joining Room...`;
-          connectToPeer(roomParam);
-        }
-      });
+  <a-entity camera></a-entity>
+</a-scene>
 
-      peer.on('connection', (c) => { conn = c; setupConn(); document.getElementById('peer-status').innerText = 'Connected to Peer'; });
-
-      function connectToPeer(remoteId) {
-        conn = peer.connect(remoteId);
-        conn.on('open', () => { setupConn(); document.getElementById('peer-status').innerText = 'Connected to Host'; });
-      }
-
-      function setupConn() {
-        conn.on('data', (data) => { 
-          if (data.type === 'interaction') { 
-            const el = document.getElementById(data.id); 
-            if (el) nudge(el); 
-            if (data.data) showDataCollected(data.data + " (Peer)");
-          } 
-        });
-      }
-
-      function nudge(el) { el.setAttribute('animation__nudge', { property: 'position', to: '0 0.2 0', dir: 'alternate', dur: 150, loop: 2 }); }
-
-      function showDataCollected(text) {
-        const list = document.getElementById('task-list');
-        const item = document.createElement('div');
-        item.className = 'task-item';
-        const time = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-        item.innerText = `[${time}] ${text}`;
-        list.appendChild(item);
-        list.parentElement.scrollTop = list.parentElement.scrollHeight;
-      }
-
-      // Handle the physical on-screen button tap for fetching
-      document.getElementById('fetch-btn').addEventListener('click', () => {
-        const chipTop = document.getElementById('chip-top');
-        if (chipTop) {
-          const instruction = chipTop.getAttribute('value') || "Instruction";
-          
-          // Emit event to FDE controller
-          document.querySelector('a-scene').emit('fetch-instruction', { instruction: instruction });
-          
-          if (conn && conn.open) conn.send({ type: 'interaction', id: 'fetch-btn', data: instruction });
-          
-          // Trigger the component to skip to next instruction
-          const conveyorEl = document.getElementById('obj-execute');
-          if (conveyorEl && conveyorEl.components['conveyor-instructions']) {
-            conveyorEl.components['conveyor-instructions'].skipToNext();
-          }
-        }
-      });
-
-      document.querySelectorAll('.interactable').forEach(el => {
-        ['mousedown', 'click'].forEach(evtType => {
-          el.addEventListener(evtType, (e) => {
-            if (e.type === 'mousedown') e.preventDefault();
-            
-            // Prevent duplicate triggers if both events fire
-            const now = Date.now();
-            if (el.lastInteraction && now - el.lastInteraction < 300) return;
-            el.lastInteraction = now;
-
-            nudge(el); 
-
-            // NOTE: Clicking the 3D model itself now acts as a secondary visual nudge,
-            // but the actual FETCH data extraction happens via the UI button above.
-          });
-        });
-      });
-    </script>
-  </body>
+</body>
 </html>
