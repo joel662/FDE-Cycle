@@ -53,6 +53,7 @@ function doFetch(){
   GS.inventory=[{state:'envelope',label:currentInstr.desc}];
   playDrop();log('FETCH: '+currentInstr.desc);
   stopBelt();updateHUD();updateButtons();
+  broadcastState('FETCH: '+currentInstr.desc);
 }
 
 // ── DECODE ───────────────────────────────────────────────────────────
@@ -73,6 +74,7 @@ function doDecode(){
       setTimeout(()=>{db.setAttribute('visible','false');db.removeAttribute('animation__rattle');},450);
     }
     updateHUD();updateButtons();
+    broadcastState('DECODED: '+currentInstr.op+' ('+currentInstr.type+')');
   });
 }
 
@@ -89,6 +91,7 @@ function doLoad(){
   GS.phase='LOADED';playDrop();GS.heat=Math.min(100,GS.heat+5);
   log('LOAD: '+k1+'='+dataA+', '+k2+'='+dataB);
   updateHUD();updateButtons();
+  broadcastState('LOAD: '+k1+'='+dataA+', '+k2+'='+dataB);
 }
 
 // ── EXECUTE ──────────────────────────────────────────────────────────
@@ -112,6 +115,7 @@ function doExecute(){
     GS.inventory=[{state:'data-result',label:rs}];GS.phase='EXECUTED';
     log('RESULT: '+dataA+' '+currentInstr.op+' '+dataB+' = '+res);
     updateHUD();updateButtons();
+    broadcastState('RESULT: '+dataA+' '+currentInstr.op+' '+dataB+' = '+res);
   });
 }
 
@@ -128,7 +132,7 @@ function doWriteback(){
   playDing();log('WRITE-BACK: '+tgt+' = '+rs+' ✓  [Cycle #'+GS.clockCycles+']');
   if(GS.clockCycles%5===0)levelUp();
   updateHUD();updateButtons();
-  sendPeer({type:'writeback',target:tgt,value:rs,cycles:GS.clockCycles});
+  broadcastState('WRITE-BACK: '+tgt+' = '+rs+' ✓  [Cycle #'+GS.clockCycles+']');
   setTimeout(()=>{GS.programQueue.push(GS.programQueue.shift());startBelt();updateHUD();},700);
 }
 
@@ -142,6 +146,7 @@ function cacheMiss(){
   if(el){el.setAttribute('value','MISS');el.setAttribute('color','#ff4400');}
   setTimeout(()=>{if(el){el.setAttribute('value','???');el.setAttribute('color','#44ff88');}},1400);
   updateHUD();updateButtons();
+  broadcastState('⚠ CACHE MISS — peer go to RAM cabinet!');
 }
 function doRAMFetch(){
   if(GS.phase!=='CACHE_MISS')return;
@@ -159,6 +164,7 @@ function doRAMFetch(){
     log('RAM retrieved: '+val);
     setTimeout(()=>{if(r)r.setAttribute('visible','false');},2200);
     updateHUD();updateButtons();
+    broadcastState('RAM retrieved: R3 = '+rs);
   });
 }
 
@@ -179,6 +185,7 @@ function pipelineFlush(){
     stopBelt();GS.phase='IDLE';GS.inventory=[];GS.clockCycles++;
     log('Flush complete. New PC active.');
     updateHUD();updateButtons();
+    broadcastState('🚨 Pipeline flush complete.');
     setTimeout(startBelt,500);
   },3800);
 }
@@ -208,11 +215,33 @@ const _roomId=_uP.get('room');
 const _isHost=!_roomId;
 const _peer=new Peer();
 let _conn=null;
+
 function sendPeer(d){if(_conn&&_conn.open)try{_conn.send(d);}catch(e){}}
+
+/** Broadcast the full game state so the peer stays in sync */
+function broadcastState(msg){
+  sendPeer({
+    type:'state',
+    msg:msg||'',
+    phase:GS.phase,
+    inventory:GS.inventory,
+    registers:Object.assign({},GS.registers),
+    clockCycles:GS.clockCycles,
+    heat:GS.heat,
+    maxSlots:GS.maxSlots,
+    level:GS.level,
+    programQueue:GS.programQueue.slice(),
+    currentTicket:GS.currentTicket,
+    result:GS.result,
+    currentInstr:currentInstr
+  });
+}
+
 function copyLink(){
   navigator.clipboard.writeText(location.origin+location.pathname+'?room='+_peer.id)
     .then(()=>log('Invite link copied!'));
 }
+
 _peer.on('open',id=>{
   const ri=document.getElementById('room-info');
   if(ri)ri.textContent='Room: '+id.substring(0,6)+(_isHost?' (Host)':' (Guest)');
@@ -221,16 +250,37 @@ _peer.on('open',id=>{
   if(!_isHost){_conn=_peer.connect(_roomId);_setupConn();}
 });
 _peer.on('connection',c=>{_conn=c;_setupConn();log('Peer joined!');});
+
+function _applyState(d){
+  GS.phase        = d.phase;
+  GS.inventory    = d.inventory||[];
+  GS.clockCycles  = d.clockCycles;
+  GS.heat         = d.heat;
+  GS.maxSlots     = d.maxSlots;
+  GS.level        = d.level;
+  GS.programQueue = d.programQueue||GS.programQueue;
+  GS.currentTicket= d.currentTicket;
+  GS.result       = d.result;
+  currentInstr    = d.currentInstr;
+  // Sync register display values
+  if(d.registers){
+    Object.keys(d.registers).forEach(k=>{
+      GS.registers[k]=d.registers[k];
+      const el=document.getElementById('val-'+k);
+      if(el)el.setAttribute('value',String(d.registers[k]).padStart(3,'0'));
+    });
+  }
+  updateHUD();
+  updateButtons();
+}
+
 function _setupConn(){
-  _conn.on('open',()=>log('P2P link up'));
+  _conn.on('open',()=>log('P2P link up ✓'));
   _conn.on('data',d=>{
-    if(d.type==='writeback'){
-      GS.clockCycles=d.cycles;
-      const v=document.getElementById('val-'+d.target);if(v)v.setAttribute('value',d.value);
-      log('Peer wrote '+d.value+' → '+d.target);updateHUD();
+    if(d.type==='state'){
+      if(d.msg)log('[Peer] '+d.msg);
+      _applyState(d);
     }
-    if(d.type==='fetch')log('Peer fetched: '+d.desc);
-    if(d.type==='shake')simulateShake();
   });
 }
 window.addEventListener('load',()=>{
