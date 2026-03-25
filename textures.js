@@ -1,9 +1,9 @@
 function makeBlockTexture(state, value) {
   const c=document.createElement('canvas');c.width=256;c.height=256;
   const ctx=c.getContext('2d');
-  // Bronze base
+  // White base (Extreme Visibility)
   const bg=ctx.createLinearGradient(0,0,256,256);
-  bg.addColorStop(0,'#5a3510');bg.addColorStop(1,'#3a2008');
+  bg.addColorStop(0,'#ffffff');bg.addColorStop(1,'#f0f0f0');
   ctx.fillStyle=bg;ctx.fillRect(0,0,256,256);
   // Rivets
   [[18,18],[238,18],[18,238],[238,238]].forEach(([x,y])=>{
@@ -11,8 +11,8 @@ function makeBlockTexture(state, value) {
     rg.addColorStop(0,'#c8902a');rg.addColorStop(1,'#6a4010');
     ctx.fillStyle=rg;ctx.beginPath();ctx.arc(x,y,7,0,6.283);ctx.fill();
   });
-  // Recessed tray
-  ctx.fillStyle='#120a02';ctx.fillRect(36,36,184,184);
+  // Recessed tray (Light Grey)
+  ctx.fillStyle='#e8e8e8';ctx.fillRect(36,36,184,184);
   // Emissive border
   ctx.save();
   ctx.shadowColor='#ff8c00';ctx.shadowBlur=16;
@@ -22,18 +22,25 @@ function makeBlockTexture(state, value) {
   // Content
   ctx.save();ctx.translate(128,128);
   if(state==='envelope'){
-    const eg=ctx.createLinearGradient(-70,-45,70,45);
-    eg.addColorStop(0,'#f0deb0');eg.addColorStop(1,'#d4b880');
-    ctx.fillStyle=eg;ctx.fillRect(-72,-48,144,96);
-    ctx.fillStyle='#c8a060';
-    ctx.beginPath();ctx.moveTo(-72,-48);ctx.lineTo(0,-8);ctx.lineTo(72,-48);ctx.closePath();ctx.fill();
-    ctx.strokeStyle='#8b6914';ctx.lineWidth=2;ctx.strokeRect(-72,-48,144,96);
-    // Wax seal
-    const sg=ctx.createRadialGradient(-3,-3,2,2,2,20);
-    sg.addColorStop(0,'#cc2222');sg.addColorStop(1,'#6a0000');
-    ctx.fillStyle=sg;ctx.beginPath();ctx.arc(0,22,22,0,6.283);ctx.fill();
-    ctx.fillStyle='#ff8888';ctx.font='bold 18px serif';
-    ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillText('⚙',0,22);
+    // Centered Full-Canvas Envelope (-128 to 128)
+    const baseCol = '#ff9933'; 
+    const flapCol = '#ffcc66';
+    ctx.fillStyle=baseCol;ctx.fillRect(-128,-128,256,256);
+    // Shadows/Folds
+    ctx.fillStyle='rgba(0,0,0,0.1)';
+    ctx.beginPath();ctx.moveTo(-128,128);ctx.lineTo(0,0);ctx.lineTo(128,128);ctx.lineTo(128,-128);ctx.lineTo(-128,-128);ctx.fill();
+    // Top flap (rounded)
+    ctx.fillStyle=flapCol;
+    ctx.beginPath();
+    ctx.moveTo(-128,-128);
+    ctx.quadraticCurveTo(0, 100, 128, -128); 
+    ctx.closePath();ctx.fill();
+    // Flap edge
+    ctx.strokeStyle='#7c4a16';ctx.lineWidth=4;
+    ctx.beginPath();ctx.moveTo(-128,-128);ctx.quadraticCurveTo(0, 100, 128, -128);ctx.stroke();
+    // Main border
+    ctx.strokeStyle='#4a2a10';ctx.lineWidth=4;ctx.strokeRect(-128,-128,256,256);
+    console.log('Texture: Drawing full-canvas envelope (centered)');
   } else if(state==='open-red'||state==='open-blue'||state==='open-green'){
     const col=state==='open-red'?'#ee3333':state==='open-blue'?'#3366ff':'#33cc55';
     const sym=state==='open-red'?'+':state==='open-blue'?'⇄':'↗';
