@@ -13,11 +13,44 @@ const VM={}; // visible markers map
 function haptic(d){ if(navigator.vibrate) navigator.vibrate(d); }
 
 
+AFRAME.registerComponent('delayed-visible', {
+  schema: { delay: {type: 'number', default: 5000} },
+  init: function () {
+    this.timer = null;
+    this.el.addEventListener('markerFound', () => {
+      if (this.timer) { clearTimeout(this.timer); this.timer = null; }
+      this.el.setAttribute('visible', true);
+    });
+    this.el.addEventListener('markerLost', () => {
+      if (this.timer) return; // Already timing hide
+      this.timer = setTimeout(() => {
+        this.el.setAttribute('visible', false);
+        this.el.object3D.visible = false;
+        this.timer = null;
+      }, this.data.delay);
+    });
+  },
+  tick: function () {
+    if (this.timer) this.el.object3D.visible = true;
+  }
+});
+
+
 function _initMarkers(){
   ['mk-conveyor','mk-dispatch','mk-registers','mk-alu','mk-ram'].forEach(id=>{
     const m=document.getElementById(id);if(!m)return;
-    m.addEventListener('markerFound',()=>{VM[id]=true;updateButtons();GS.minDist=99;});
-    m.addEventListener('markerLost',()=>{VM[id]=false;updateButtons();GS.minDist=99;});
+    m.hideTimer = null;
+    m.addEventListener('markerFound',()=>{
+      if(m.hideTimer) { clearTimeout(m.hideTimer); m.hideTimer = null; }
+      VM[id]=true; updateButtons(); GS.minDist=99;
+    });
+    m.addEventListener('markerLost',()=>{
+      if(m.hideTimer) return; // Already timing hide
+      m.hideTimer = setTimeout(() => {
+        VM[id]=false; updateButtons(); GS.minDist=99;
+        m.hideTimer = null;
+      }, 5000);
+    });
   });
 
   // Global tap for dropping
