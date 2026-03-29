@@ -29,6 +29,13 @@ AFRAME.registerComponent('delayed-visible', {
         this.timer = null;
       }, this.data.delay);
     });
+    this.el.addEventListener('force-hide', () => {
+      if (this.timer) { 
+        clearTimeout(this.timer); this.timer = null;
+        this.el.setAttribute('visible', false);
+        this.el.object3D.visible = false;
+      }
+    });
   },
   tick: function () {
     if (this.timer) this.el.object3D.visible = true;
@@ -37,10 +44,18 @@ AFRAME.registerComponent('delayed-visible', {
 
 
 function _initMarkers(){
-  ['mk-conveyor','mk-dispatch','mk-registers','mk-alu','mk-ram'].forEach(id=>{
+  const markerIds=['mk-conveyor','mk-dispatch','mk-registers','mk-alu','mk-ram'];
+  markerIds.forEach(id=>{
     const m=document.getElementById(id);if(!m)return;
     m.hideTimer = null;
     m.addEventListener('markerFound',()=>{
+      // Clear timers for all other markers
+      markerIds.forEach(otherId=>{
+        if(otherId===id) return;
+        const om=document.getElementById(otherId);if(!om)return;
+        if(om.hideTimer){ clearTimeout(om.hideTimer); om.hideTimer=null; VM[otherId]=false; }
+        om.emit('force-hide');
+      });
       if(m.hideTimer) { clearTimeout(m.hideTimer); m.hideTimer = null; }
       VM[id]=true; updateButtons(); GS.minDist=99;
     });
