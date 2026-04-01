@@ -70,6 +70,11 @@ function _initMarkers(){
       });
       if(m.hideTimer) { clearTimeout(m.hideTimer); m.hideTimer = null; }
       VM[id]=true; updateButtons(); GS.minDist=99;
+      
+      // Immediate first spawn for Conveyor
+      if(id === 'mk-conveyor' && GS.piledEnvelopes === 0) {
+        spawnEnvelope();
+      }
     });
     m.addEventListener('markerLost',()=>{
       if(m.hideTimer) return; // Already timing hide
@@ -112,26 +117,27 @@ function updateButtons(){
 
 }
 
-// Belt control
-let beltOn=false;
-function startBelt(){
-  if(beltOn)return;beltOn=true;
-  const chip=document.getElementById('belt-chip');if(!chip)return;
-  chip.setAttribute('visible','true');
-  setImg('chip-img',makeBlockTexture('envelope'));
-  chip.removeAttribute('animation__belt');
-  chip.setAttribute('animation__belt',{property:'position',from:'-0.7 0.3 0',to:'0.7 0.3 0',loop:true,dur:7500,easing:'linear'});
-}
-function stopBelt(){
-  beltOn=false;
-  const chip=document.getElementById('belt-chip');if(!chip)return;
-  chip.removeAttribute('animation__belt');chip.setAttribute('visible','false');
-}
+// Belt control (DEPRECATED: individual entities handle animations now)
+function startBelt(){}
+function stopBelt(){}
 function setImg(id,src){const e=document.getElementById(id);if(e)e.setAttribute('src',src);}
 
 // ── FETCH ────────────────────────────────────────────────────────────
 function doFetch(){
-  if(GS.inventory.length >= GS.maxSlots || GS.bugActive) return;
+  if(GS.inventory.length >= GS.maxSlots || GS.bugActive || GS.piledEnvelopes <= 0) return;
+
+  // Take the front envelope from the visual queue
+  const frontEnvelope = GS.visualQueue.shift();
+  if(frontEnvelope) {
+    // Animation: Pull towards camera then disappear
+    frontEnvelope.removeAttribute('animation__pos');
+    frontEnvelope.setAttribute('animation__pull', {
+      property: 'position', to: '0 0.5 1.5', dur: 400, easing: 'easeInQuad'
+    });
+    setTimeout(() => {
+      if(frontEnvelope.parentNode) frontEnvelope.parentNode.removeChild(frontEnvelope);
+    }, 400);
+  }
 
   // Filter instructions by Level Syllabus
   const pool = INSTRUCTIONS.filter(i => {
@@ -152,11 +158,8 @@ function doFetch(){
   
   thud(); playSteam(); log('FETCH: '+currentInstr.desc);
   
-  const chip=document.getElementById('belt-chip');
-  if(chip) {
-    chip.setAttribute('visible', 'false');
-    setTimeout(() => { chip.setAttribute('visible','true'); }, 2000);
-  }
+  GS.piledEnvelopes--;
+  shiftQueueForward();
 
   updateHUD(); updateButtons();
   broadcastState('FETCHED an instruction', { hideChip: true });
@@ -462,7 +465,10 @@ function broadcastState(msg, extra){
     heat:GS.heat,
     level:GS.level,
     bugActive:GS.bugActive,
-    programQueue:GS.programQueue.slice()
+    programQueue:GS.programQueue.slice(),
+    piledEnvelopes:GS.piledEnvelopes,
+    spawnTimer:GS.spawnTimer,
+    maxSpawnInterval:GS.maxSpawnInterval
   }, extra));
 
 }
@@ -477,6 +483,9 @@ function _applyState(d){
   if(d.level !== undefined) GS.level = d.level;
   if(d.bugActive !== undefined) GS.bugActive = d.bugActive;
   if(d.programQueue) GS.programQueue = d.programQueue;
+  if(d.piledEnvelopes !== undefined) GS.piledEnvelopes = d.piledEnvelopes;
+  if(d.spawnTimer !== undefined) GS.spawnTimer = d.spawnTimer;
+  if(d.maxSpawnInterval !== undefined) GS.maxSpawnInterval = d.maxSpawnInterval;
 
 
   // Visual event: chip hide
@@ -583,15 +592,22 @@ function updateHUD(){
          sub='Shake hard to retrieve data from main memory';
          cardState='state-alert';
        }
-       else if(GS.phase==='FLUSH') {
-         msg='⚠ PIPELINE FLUSH — Wait...';
-         sub='Branch detected — resetting the pipeline';
-         cardState='state-alert';
-       }
+        if(GS.phase==='FLUSH') {
+          msg='⚠ PIPELINE FLUSH — Wait...';
+          sub='Branch detected — resetting the pipeline';
+          cardState='state-alert';
+        }
 
-       dest.textContent=msg;
-       if(hint) hint.textContent=sub;
-       if(card && cardState) card.classList.add(cardState);
+        // --- ENVELOPE OVERFLOW OVERRIDE ---
+        if(GS.piledEnvelopes >= 4) {
+           msg='⚠ QUEUE FULL - CLEAR CONVEYOR!';
+           sub='Collect packets from Marker 0 to resume spawning';
+           cardState='state-urgent';
+        }
+
+        dest.textContent=msg;
+        if(hint) hint.textContent=sub;
+        if(card && cardState) card.classList.add(cardState);
     }
   }
 
@@ -614,6 +630,17 @@ function updateHUD(){
   }
   const vign=document.getElementById('heat-vignette');
   if(vign)vign.style.opacity=(GS.heat/100)*0.5;
+
+  const piledEl=document.getElementById('hud-piled');
+  if(piledEl) {
+    piledEl.textContent='📦 '+GS.piledEnvelopes;
+    piledEl.classList.remove('piled-warning', 'piled-full');
+    if(GS.piledEnvelopes >= 4) piledEl.classList.add('piled-full');
+    else if(GS.piledEnvelopes >= 3) piledEl.classList.add('piled-warning');
+  }
+  const timerEl=document.getElementById('hud-timer');
+  if(timerEl) timerEl.textContent='⏳ '+GS.spawnTimer+'s';
+
   updateInventoryHUD();
 }
 
@@ -768,6 +795,94 @@ window.addEventListener('load',()=>{
   const scene=document.querySelector('a-scene');
   if(scene) scene.setAttribute('interaction-tracker', '');
   log('Steampunk FDE Workshop ready!');
+  initSpawning();
 });
+
+function shiftQueueForward(){
+  GS.visualQueue.forEach((env, idx) => {
+    const targetX = 0.7 - (idx * 0.4);
+    env.setAttribute('animation__shift', {
+      property: 'position', to: `${targetX} 0.08 0`, dur: 800, easing: 'easeOutQuad'
+    });
+  });
+}
+
+function initSpawning(){
+  setInterval(()=>{
+    if(GS.spawnTimer > 0) {
+      GS.spawnTimer--;
+      updateHUD();
+    } else {
+      spawnEnvelope();
+    }
+  }, 1000);
+}
+
+function spawnEnvelope(){
+  if(GS.piledEnvelopes >= 4) {
+    playAlarm();
+    log('⚠ CONVEYOR JAMMED! Clear the queue to resume spawning.');
+    return;
+  }
+
+  GS.piledEnvelopes++;
+  
+  // Calculate new interval: start 60s, decrease by 3s per cycle, min 5s
+  const interval = Math.max(5, 60 - (GS.clockCycles * 3));
+  GS.maxSpawnInterval = interval;
+  GS.spawnTimer = interval;
+
+  const piledEl=document.getElementById('hud-piled');
+  if(piledEl) {
+    piledEl.classList.remove('arrival-pulse');
+    void piledEl.offsetWidth; 
+    piledEl.classList.add('arrival-pulse');
+  }
+
+  // Create physical 3D envelope
+  createEnvelopeEntity();
+
+  updateHUD();
+  playSteam(); 
+  log('NEW INSTRUCTION ARRIVED at Conveyor!');
+  broadcastState('New instruction arrived');
+}
+
+function createEnvelopeEntity(){
+  const container = document.getElementById('conveyor-queue');
+  if(!container) return;
+
+  const env = document.createElement('a-entity');
+  const idx = GS.visualQueue.length;
+  const startX = -0.9;
+  const targetX = Math.max(-0.9, 0.7 - (idx * 0.4));
+  
+  env.setAttribute('position', `${startX} 0.08 0`);
+  env.setAttribute('rotation', `0 ${Math.random()*10-5} 0`); // Slight random rotation
+
+  const box = document.createElement('a-box');
+  box.setAttribute('width', '0.4');
+  box.setAttribute('height', '0.04');
+  box.setAttribute('depth', '0.28');
+  box.setAttribute('material', 'color:#ffcc66;metalness:0.1;roughness:0.8;emissive:#ff9933;emissiveIntensity:0.3');
+  env.appendChild(box);
+
+  const img = document.createElement('a-image');
+  img.setAttribute('width', '0.38');
+  img.setAttribute('height', '0.26');
+  img.setAttribute('position', '0 0.022 0');
+  img.setAttribute('rotation', '-90 0 0');
+  img.setAttribute('material', 'shader:flat');
+  img.setAttribute('src', makeBlockTexture('envelope'));
+  env.appendChild(img);
+
+  // Animation to target position
+  env.setAttribute('animation__pos', {
+    property: 'position', from: `${startX} 0.08 0`, to: `${targetX} 0.08 0`, dur: 4000, easing: 'linear'
+  });
+
+  container.appendChild(env);
+  GS.visualQueue.push(env);
+}
 
 

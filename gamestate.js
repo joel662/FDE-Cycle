@@ -18,7 +18,11 @@ const GS = {
   result:null,
   aluInstruction:null, // Instruction buffered at Forge
   shakeInProgress:false,
-  bugActive: false // Workstation lockout
+  bugActive: false, // Workstation lockout
+  piledEnvelopes: 0,
+  spawnTimer: 60,
+  maxSpawnInterval: 60,
+  visualQueue: []
 };
 
 function generateTask() {
